@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiCall, Block, Transaction } from "@/lib/api";
+import { apiCall, Block, Transaction, fetchChainStats, fetchIoTTransactions, ChainStats } from "@/lib/api";
 import { useSmartPolling } from "@/hooks/useSmartPolling";
 import { Link, useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
@@ -13,16 +13,15 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart,
 import { Globe3D } from "@/components/Globe3D";
 import { ALL_GLOBE_MARKERS } from "@/lib/globeData";
 import { useTransactionSimulator } from "@/hooks/useTransactionSimulator";
-import { generateIoTTransaction, getIoTTransactions, IoTTransaction } from "@/lib/iotGenerator";
 import { TOTAL_VALIDATOR_COUNT } from "@/lib/validators";
 
 export default function Dashboard() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [stats, setStats] = useState({
     height: 0,
-    txCount: 3355, // Simulated total for demo match
-    accountCount: 2625, // Simulated total for demo match
-    difficulty: 2.14,
+    txCount: 0,
+    accountCount: 0,
+    difficulty: 0,
     avgBlockTime: 0,
     avgTxPerBlock: 0
   });
@@ -35,15 +34,29 @@ export default function Dashboard() {
   const [heatmapPoints, setHeatmapPoints] = useState<{lat: number, lon: number, value: number}[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   
-  // Use transaction simulator for globe visualization
+  // Use transaction simulator for globe visualization only
   const { markers: globeMarkers, activeTransactions: simulatedTxs } = useTransactionSimulator(true);
 
-  // Wrap fetchData in useCallback to be stable for useSmartPolling
+  // Fetch all data from backend
   const fetchData = useCallback(async () => {
     const now = new Date();
     setLastUpdated(now.toLocaleTimeString());
 
-    // Fetch blocks (fetch more to calculate averages)
+    // Fetch chain stats from backend
+    try {
+      const chainStats = await fetchChainStats();
+      setStats(prev => ({
+        ...prev,
+        height: chainStats.height,
+        txCount: chainStats.total_transactions,
+        accountCount: chainStats.active_accounts,
+        difficulty: chainStats.difficulty,
+      }));
+    } catch (error) {
+      console.error("Failed to fetch chain stats:", error);
+    }
+
+    // Fetch blocks from backend
     const blocksRes = await apiCall<Block[]>('/blocks?limit=20');
     
     if (!blocksRes.success) {
@@ -53,22 +66,8 @@ export default function Dashboard() {
     if (Array.isArray(blocksRes.data)) {
       const blocks = blocksRes.data;
       
-      // Monotonic Guard: Check if API data is older than local simulation
-      // If local height is higher, we should NOT overwrite with API data
-      // Instead, we might want to merge or just ignore the API update for the blocks list
-      setLatestBlocks(prev => {
-        // If we have local blocks and the API returns blocks with lower height,
-        // keep our local blocks to maintain the "infinite growth" illusion
-        if (prev.length > 0 && blocks.length > 0) {
-          const localHeight = prev[0].index;
-          const apiHeight = blocks[0].index;
-          
-          if (localHeight > apiHeight) {
-            return prev; // Keep local simulation
-          }
-        }
-        return blocks.slice(0, 10); // Use API data if it's newer or we have no local data
-      });
+      // Use backend blocks directly - no simulation override
+      setLatestBlocks(blocks.slice(0, 10));
       
       if (blocks.length > 0) {
         // Calculate metrics and prepare chart data
@@ -106,197 +105,57 @@ export default function Dashboard() {
 
           totalTx += txCount;
           
-          // Estimate hashrate: Difficulty / BlockTime
-          // If blockTime is 0 or null, use average or skip
-          // For visualization, we'll use a simple metric: Difficulty * (TargetTime / ActualTime)
-          // Assuming target time is 12s
+          // Estimate hashrate based on difficulty and block time
           const difficulty = block.difficulty || 2;
-          const estimatedHashrate = blockTime > 0 ? (difficulty / blockTime) * 100 : 0; // Arbitrary scale for demo
-
-          // Add realistic fluctuation to txCount for visualization if it's too static
-          // This creates a "heartbeat" effect while keeping the average roughly correct
-          // We use a deterministic random based on block index so it doesn't flicker on refresh
-          const fluctuation = Math.sin(block.index * 0.5) * 3 + (Math.cos(block.index * 0.2) * 2);
-          const visualTxCount = Math.max(1, Math.round(txCount + fluctuation));
+          const estimatedHashrate = blockTime > 0 ? (difficulty / blockTime) * 100 : 0;
 
           newChartData.push({
             height: block.index,
-            txCount: visualTxCount,
-            realTxCount: txCount, // Keep real count for tooltip if needed
+            txCount: txCount,
             blockTime: blockTime > 0 ? blockTime : null,
             hashrate: estimatedHashrate > 0 ? estimatedHashrate : null
           });
         }
 
-        const avgTime = validDiffs > 0 ? totalTimeDiff / validDiffs : 12; // Default to 12s if no data
+        const avgTime = validDiffs > 0 ? totalTimeDiff / validDiffs : 10;
         const avgTx = totalTx / blocks.length;
 
-        setStats(prev => {
-          // Monotonic Guard: Ensure block height never decreases
-          // If server returns older block height than our local simulation, keep local height
-          const apiHeight = blocks[0].index;
-          const newHeight = apiHeight > prev.height ? apiHeight : prev.height;
-          
-          return { 
-            ...prev, 
-            height: newHeight,
-            // Only update difficulty if we're using API data, otherwise keep simulated difficulty
-            difficulty: apiHeight > prev.height ? (blocks[0].difficulty || 2) : prev.difficulty,
-            avgBlockTime: parseFloat(avgTime.toFixed(1)),
-            avgTxPerBlock: parseFloat(avgTx.toFixed(1))
-          };
-        });
-        
-        // Only update chart data if it's the first load or if we want to sync
-        // For now, we let the simulation handle the chart updates to avoid jitter
-        if (chartData.length === 0) {
-          setChartData(newChartData);
-        }
-        
-        // Use getIoTTransactions to ensure consistency with Transactions page
-        // We use page 1 and limit to 5 items for the dashboard view
-        const consistentTxs = getIoTTransactions(1, 9);
-        // Map IoTTransaction to Transaction interface expected by Dashboard
-        const mappedTxs = consistentTxs.map(tx => ({
-          id: tx.id,
-          from: tx.deviceType, // Use device type as sender for display
-          to: tx.sector, // Use sector as receiver for display
-          amount: tx.amount,
-          timestamp: tx.timestamp,
-          tx_type: "Transfer" as const,
-          location: tx.location // Add location for filtering
+        setStats(prev => ({ 
+          ...prev, 
+          avgBlockTime: parseFloat(avgTime.toFixed(1)),
+          avgTxPerBlock: parseFloat(avgTx.toFixed(1))
         }));
-        setRecentActivity(mappedTxs);
+        
+        setChartData(newChartData);
       }
     }
-    return blocksRes.data;
-  }, [chartData.length]); // Dependency on chartData.length to initialize once
 
-  // Use smart polling hook
+    // Fetch IoT transactions from backend
+    try {
+      const iotData = await fetchIoTTransactions(1, 9);
+      const mappedTxs = iotData.transactions.map(tx => ({
+        id: tx.id,
+        from: tx.deviceType,
+        to: tx.sector,
+        amount: tx.amount,
+        timestamp: tx.timestamp,
+        tx_type: "Transfer" as const,
+        location: tx.location
+      }));
+      setRecentActivity(mappedTxs);
+    } catch (error) {
+      console.error("Failed to fetch IoT transactions:", error);
+    }
+
+    return blocksRes.data;
+  }, []);
+
+  // Use smart polling hook - poll every 5 seconds to match backend block time
   const { error: pollingError, retry: retryPolling, isPolling } = useSmartPolling(fetchData, {
-    interval: 10000, // Poll every 10s (less frequent than simulation)
+    interval: 5000,
     maxRetries: 3,
     backoffFactor: 2
   });
-
-  // Live Block Simulation Effect
-  useEffect(() => {
-    if (chartData.length === 0) return;
-
-    const interval = setInterval(() => {
-      setChartData(currentData => {
-        if (currentData.length === 0) return currentData;
-
-        const lastBlock = currentData[currentData.length - 1];
-        const nextIndex = lastBlock.height + 1;
-        
-        // Generate realistic fluctuating tx count
-        // Use a continuous time-based noise for smoother transitions than pure random
-        const time = Date.now() / 1000;
-        const baseTx = 6; // Average tx per block
-        const noise = Math.sin(time) * 2 + Math.cos(time * 2.5) * 1.5 + (Math.random() - 0.5) * 2;
-        const nextTxCount = Math.max(1, Math.round(baseTx + noise));
-        
-        // Simulate block time (mostly 3s for this fast demo, with some jitter)
-        const nextBlockTime = 3 + (Math.random() * 0.5); 
-        
-          // Estimate hashrate with more fluctuation
-        // Dynamic difficulty fluctuation
-        // Base difficulty 2.14 + sine wave oscillation + random noise
-        const baseDifficulty = 2.14;
-        const difficultyNoise = Math.sin(time * 0.2) * 0.05 + (Math.random() - 0.5) * 0.02;
-        const nextDifficulty = parseFloat((baseDifficulty + difficultyNoise).toFixed(4));
-
-        // Add significant noise to hashrate to make the chart look more active
-        // Base calculation + sine wave oscillation + random noise
-        const baseHashrate = (nextDifficulty / nextBlockTime) * 100;
-        const hashrateNoise = Math.sin(time * 0.5) * 15 + (Math.random() - 0.5) * 10;
-        const nextHashrate = Math.max(40, baseHashrate + hashrateNoise);
-
-        const newBlock = {
-          height: nextIndex,
-          txCount: nextTxCount,
-          realTxCount: nextTxCount,
-          blockTime: nextBlockTime,
-          hashrate: nextHashrate
-        };
-
-        // Scroll: Remove first, add new
-        const newData = [...currentData.slice(1), newBlock];
-        
-        // Update stats to reflect latest block
-        setStats(prev => ({
-          ...prev,
-          height: nextIndex,
-          difficulty: nextDifficulty,
-          txCount: prev.txCount + nextTxCount,
-          avgBlockTime: parseFloat(((prev.avgBlockTime * 19 + nextBlockTime) / 20).toFixed(1)),
-          avgTxPerBlock: parseFloat(((prev.avgTxPerBlock * 19 + nextTxCount) / 20).toFixed(1))
-        }));
-
-        // Update latest blocks list to show the new block at the top
-        setLatestBlocks(prev => {
-          const newBlockObj: Block = {
-            index: nextIndex,
-            hash: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
-            timestamp: Date.now(),
-            transactions: Array(nextTxCount).fill(0).map((_, i) => ({
-              id: Math.random().toString(36).substring(2, 15),
-              from: "0x" + Math.random().toString(16).substring(2, 42),
-              to: "0x" + Math.random().toString(16).substring(2, 42),
-              amount: Math.random() * 100,
-              timestamp: new Date().toISOString(),
-              tx_type: "Transfer"
-            })),
-            difficulty: 2.14,
-            previous_hash: prev[0]?.hash || "0x0000000000000000000000000000000000000000",
-            validator: "edge_node_" + Math.floor(Math.random() * 100).toString().padStart(2, '0'),
-            entropy: Math.random() * 5
-          };
-          return [newBlockObj, ...prev.slice(0, 9)];
-        });
-
-        // Simulate new transactions using IoT generator
-        const newTxsCount = Math.floor(Math.random() * 5) + 1;
-        const newTransactions = Array(newTxsCount).fill(0).map((_, i) => {
-          // Use current time as seed component to get "new" random transactions
-          return generateIoTTransaction(Date.now() + i);
-        });
-        
-        // Update recent activity with new transactions to keep it alive
-        setRecentActivity(prev => {
-          const newActivity = newTransactions.map(tx => ({
-            id: tx.id,
-            from: tx.deviceType,
-            to: tx.sector,
-            amount: tx.amount,
-            timestamp: tx.timestamp,
-            tx_type: "Transfer" as const,
-            location: tx.location // Add location for filtering
-          }));
-          return [...newActivity, ...prev].slice(0, 9);
-        });
-
-        // Update heatmap points based on new transactions
-        const newHeatmapPoints = newTransactions.map(tx => ({
-          lat: tx.coordinates[0],
-          lon: tx.coordinates[1],
-          value: 1.0 // Start hot
-        }));
-
-        setHeatmapPoints(prev => {
-          // Decay existing points
-          const decayed = prev.map(p => ({ ...p, value: p.value * 0.9 })).filter(p => p.value > 0.1);
-          // Add new points
-          return [...decayed, ...newHeatmapPoints];
-        });
-
-        return newData;
-      });
-    }, 3000); // New block every 3 seconds
-
-    return () => clearInterval(interval);
-  }, [chartData.length > 0]); // Start once we have initial data
 
   // Toggle full screen / demo mode
   useEffect(() => {
@@ -319,8 +178,6 @@ export default function Dashboard() {
     e.preventDefault();
     if (!searchQuery.trim()) return;
     
-    // Simple heuristic: if it looks like a hash (long string), try to go to tx details
-    // In a real app, we would check if it's a block hash, tx hash, or address
     if (searchQuery.length > 40) {
       setLocation(`/tx/${searchQuery}`);
     } else {
@@ -328,7 +185,7 @@ export default function Dashboard() {
     }
   };
 
-  // Globe Markers
+  // Globe Markers - keep using simulated data for visual effect
   const markers = ALL_GLOBE_MARKERS;
 
   const getSectorIcon = (sector: string) => {
@@ -344,19 +201,19 @@ export default function Dashboard() {
   };
 
   // Globe Connections
-  const currentHashrate = chartData.length > 0 ? chartData[chartData.length - 1].hashrate : 0;
+  const currentHashrate = chartData.length > 0 ? chartData[chartData.length - 1]?.hashrate : 0;
 
   const connections: { start: [number, number]; end: [number, number] }[] = [
-    { start: [40.7128, -74.0060], end: [51.5074, -0.1278] }, // NY -> London
-    { start: [51.5074, -0.1278], end: [35.6762, 139.6503] }, // London -> Tokyo
-    { start: [35.6762, 139.6503], end: [1.3521, 103.8198] }, // Tokyo -> Singapore
-    { start: [1.3521, 103.8198], end: [-33.8688, 151.2093] }, // Singapore -> Sydney
-    { start: [52.5200, 13.4050], end: [31.2304, 121.4737] }, // Berlin -> Shanghai
-    { start: [40.7128, -74.0060], end: [-23.5505, -46.6333] }, // NY -> Sao Paulo
-    { start: [51.5074, -0.1278], end: [25.2048, 55.2708] }, // London -> Dubai
-    { start: [35.6762, 139.6503], end: [37.5665, 126.9780] }, // Tokyo -> Seoul
-    { start: [43.6532, -79.3832], end: [48.8566, 2.3522] }, // Toronto -> Paris
-    { start: [19.0760, 72.8777], end: [25.2048, 55.2708] }, // Mumbai -> Dubai
+    { start: [40.7128, -74.0060], end: [51.5074, -0.1278] },
+    { start: [51.5074, -0.1278], end: [35.6762, 139.6503] },
+    { start: [35.6762, 139.6503], end: [1.3521, 103.8198] },
+    { start: [1.3521, 103.8198], end: [-33.8688, 151.2093] },
+    { start: [52.5200, 13.4050], end: [31.2304, 121.4737] },
+    { start: [40.7128, -74.0060], end: [-23.5505, -46.6333] },
+    { start: [51.5074, -0.1278], end: [25.2048, 55.2708] },
+    { start: [35.6762, 139.6503], end: [37.5665, 126.9780] },
+    { start: [43.6532, -79.3832], end: [48.8566, 2.3522] },
+    { start: [19.0760, 72.8777], end: [25.2048, 55.2708] },
   ];
 
   return (
@@ -462,7 +319,7 @@ export default function Dashboard() {
                     contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '4px', fontSize: '12px' }}
                     itemStyle={{ color: '#06b6d4' }}
                     labelStyle={{ display: 'none' }}
-                    formatter={(value: number) => [`${value.toFixed(1)}s`, 'Time']}
+                    formatter={(value: number) => [`${value?.toFixed(1)}s`, 'Time']}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -486,8 +343,8 @@ export default function Dashboard() {
                     stroke="#ec4899" 
                     strokeWidth={2} 
                     dot={false} 
-                    isAnimationActive={true} // Enable animation
-                    animationDuration={500} // Smooth transition for new points
+                    isAnimationActive={true}
+                    animationDuration={500}
                   />
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '4px', fontSize: '12px' }}
@@ -522,7 +379,7 @@ export default function Dashboard() {
                     contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '4px', fontSize: '12px' }}
                     itemStyle={{ color: '#8b5cf6' }}
                     labelStyle={{ display: 'none' }}
-                    formatter={(value: number) => [`${value.toFixed(2)} EH/s`, 'Hashrate']}
+                    formatter={(value: number) => [`${value?.toFixed(2)} EH/s`, 'Hashrate']}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -533,7 +390,7 @@ export default function Dashboard() {
 
       {/* Main Content Grid */}
       <div className={`grid gap-4 md:grid-cols-2 lg:grid-cols-7 ${isDemoMode ? 'flex-1 min-h-0' : ''}`}>
-        {/* Globe Section */}
+        {/* Globe Section - Keep using simulated data for visual effect */}
         <Card className={`col-span-2 lg:col-span-3 bg-card border-muted overflow-hidden relative h-[600px]`}>
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/80 z-10 pointer-events-none" />
           <CardHeader className="relative z-20">
@@ -550,7 +407,6 @@ export default function Dashboard() {
             scale={1.1}
             sizingMode="fit"
             onMarkerClick={(marker) => {
-              // Extract city name from tooltip (e.g., "New York Hub" -> "New York")
               if (typeof marker.tooltip === 'string') {
                 const cityName = marker.tooltip.split(' Hub')[0].split(' Node')[0];
                 setSelectedRegion(cityName);
@@ -569,7 +425,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* Recent Blocks */}
+        {/* Recent Blocks - Now showing real backend data */}
         <Card className={`col-span-2 lg:col-span-2 bg-card border-muted h-[600px] overflow-hidden flex flex-col`}>
           <CardHeader>
             <CardTitle className="text-lg font-medium text-muted-foreground">Latest Blocks</CardTitle>
@@ -596,8 +452,6 @@ export default function Dashboard() {
                               : new Date(block.timestamp * 1000);
                             
                             if (isNaN(date.getTime())) {
-                              // Fallback for invalid dates - use a relative time based on block index difference
-                              // This prevents "Invalid Date" flash during initial load or bad data
                               return "Just now";
                             }
                             return date.toLocaleTimeString();
@@ -610,7 +464,7 @@ export default function Dashboard() {
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-medium">{block.transactions.length} txs</div>
-                    <div className="text-xs text-muted-foreground">Reward: {(block as any).reward || '2.5'} EDGE</div>
+                    <div className="text-xs text-muted-foreground">Reward: 2.5 EDGE</div>
                   </div>
                 </div>
               ))}
@@ -623,7 +477,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent Transactions */}
+        {/* Recent Transactions - Now from backend IoT API */}
         <Card className={`col-span-2 lg:col-span-2 bg-card border-muted h-[600px] overflow-hidden flex flex-col`}>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg font-medium text-muted-foreground">
@@ -652,62 +506,50 @@ export default function Dashboard() {
                         <div className="bg-secondary p-2 rounded-md">
                           {getSectorIcon(tx.to || '')}
                         </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-sm truncate max-w-[120px]">
-                            {tx.id}
-                          </div>
-                          <div className="text-xs text-muted-foreground truncate max-w-[120px]">
-                            From: {tx.from}
-                          </div>
+                        <div>
+                          <div className="font-mono text-sm truncate max-w-[180px]">{tx.id.substring(0, 32)}...</div>
+                          <div className="text-xs text-muted-foreground">From: {tx.from}</div>
                         </div>
                       </div>
-                      <div className="text-right whitespace-nowrap">
-                        <div className="text-sm font-medium">{(tx.amount || 0).toFixed(2)} EDGE</div>
-                        <div className="text-xs text-muted-foreground">{new Date(tx.timestamp).toLocaleTimeString()}</div>
+                      <div className="text-right">
+                        <div className="text-sm font-medium text-green-500">{tx.amount.toFixed(2)} EDGE</div>
+                        <div className="text-xs text-muted-foreground">
+                          {new Date(tx.timestamp).toLocaleTimeString()}
+                        </div>
                       </div>
                     </div>
                   </DialogTrigger>
                   <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                       <DialogTitle>Transaction Details</DialogTitle>
-                      <DialogDescription className="sr-only">
-                        Detailed information about transaction {tx.id}
+                      <DialogDescription>
+                        IoT Data Contribution Transaction
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                      <div className="flex justify-center p-4 bg-white rounded-lg">
-                        <QRCode value={`${window.location.origin}/tx/${tx.id}`} size={150} />
+                      <div>
+                        <label className="text-sm text-muted-foreground">Transaction ID</label>
+                        <div className="font-mono text-xs break-all bg-muted p-2 rounded">{tx.id}</div>
                       </div>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between border-b border-border pb-2">
-                          <span className="text-muted-foreground">Tx ID</span>
-                          <span className="font-mono text-xs truncate max-w-[200px]">{tx.id}</span>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm text-muted-foreground">Device Type</label>
+                          <div className="font-medium">{tx.from}</div>
                         </div>
-                        <div className="flex justify-between border-b border-border pb-2">
-                          <span className="text-muted-foreground">From (Device)</span>
-                          <span className="font-medium">{tx.from}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-border pb-2">
-                          <span className="text-muted-foreground">To (Sector)</span>
-                          <span className="font-medium">{tx.to}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-border pb-2">
-                          <span className="text-muted-foreground">Amount</span>
-                          <span className="font-bold text-green-500">{(tx.amount || 0).toFixed(4)} EDGE</span>
-                        </div>
-                        <div className="flex justify-between border-b border-border pb-2">
-                          <span className="text-muted-foreground">Time</span>
-                          <span>{new Date(tx.timestamp).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Type</span>
-                          <Badge variant="outline">{tx.tx_type}</Badge>
+                        <div>
+                          <label className="text-sm text-muted-foreground">Sector</label>
+                          <div className="font-medium">{tx.to}</div>
                         </div>
                       </div>
-                      <div className="pt-2">
-                        <Link href={`/tx/${tx.id}`}>
-                          <Button className="w-full">View Full Details</Button>
-                        </Link>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm text-muted-foreground">Amount</label>
+                          <div className="font-medium text-green-500">{tx.amount.toFixed(4)} EDGE</div>
+                        </div>
+                        <div>
+                          <label className="text-sm text-muted-foreground">Time</label>
+                          <div className="font-medium">{new Date(tx.timestamp).toLocaleString()}</div>
+                        </div>
                       </div>
                     </div>
                   </DialogContent>

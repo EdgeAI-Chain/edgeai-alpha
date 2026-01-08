@@ -251,6 +251,37 @@ export async function fetchValidatorMap(): Promise<ValidatorMapResponse> {
   }
 }
 
+// ============ Chain Stats API ============
+
+export interface ChainStats {
+  height: number;
+  total_transactions: number;
+  total_supply: number;
+  total_staked: number;
+  active_accounts: number;
+  data_entries: number;
+  difficulty: number;
+  last_block_time: number;
+}
+
+/**
+ * 获取区块链状态信息
+ */
+export async function fetchChainStats(): Promise<ChainStats> {
+  try {
+    const response = await apiCall<ChainStats>('/chain');
+    
+    if (response.success && response.data) {
+      return response.data;
+    }
+    
+    throw new Error(response.error || "Failed to fetch chain stats");
+  } catch (error) {
+    console.warn("Failed to fetch chain stats:", error);
+    throw error;
+  }
+}
+
 // ============ Network Stats API ============
 
 export interface NetworkStats {

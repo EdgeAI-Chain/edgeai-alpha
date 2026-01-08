@@ -188,16 +188,6 @@ impl Default for ValidatorGenerator {
     }
 }
 
-impl Clone for ValidatorLocation {
-    fn clone(&self) -> Self {
-        ValidatorLocation {
-            name: self.name,
-            lat: self.lat,
-            lng: self.lng,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

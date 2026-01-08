@@ -5,22 +5,13 @@ import { ShieldCheck, Activity, Server, Signal, Map as MapIcon } from "lucide-re
 import { Globe3D } from "@/components/Globe3D";
 import { ALL_GLOBE_MARKERS } from "@/lib/globeData";
 import { cn } from "@/lib/utils";
-import { TOTAL_VALIDATOR_COUNT } from "@/lib/validators";
-
-interface Validator {
-  id: string;
-  name: string;
-  status: 'online' | 'offline' | 'maintenance';
-  blocks_mined: number;
-  reputation: number;
-  uptime: number;
-  location: string;
-  lat: number;
-  lng: number;
-}
+import { fetchValidatorNodes, ValidatorStats } from "@/lib/api";
+import { Validator } from "@/lib/validators";
 
 export default function Validators() {
   const [validators, setValidators] = useState<Validator[]>([]);
+  const [stats, setStats] = useState<ValidatorStats>({ online: 0, offline: 0, maintenance: 0 });
+  const [totalValidators, setTotalValidators] = useState(0);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
@@ -53,96 +44,23 @@ export default function Validators() {
   ] as { start: [number, number]; end: [number, number] }[];
 
   useEffect(() => {
-    // Simulate fetching validator data
-    const generateValidators = () => {
-      const nodes: Validator[] = [];
-      // Expanded list of major tech hubs and cities to ensure nodes appear on land
-      const locations = [
-        // North America
-        { name: 'US-East (N. Virginia)', lat: 39.0438, lng: -77.4874 },
-        { name: 'US-East (New York)', lat: 40.7128, lng: -74.0060 },
-        { name: 'US-West (California)', lat: 37.3382, lng: -121.8863 },
-        { name: 'US-West (Oregon)', lat: 45.5152, lng: -122.6784 },
-        { name: 'US-Central (Texas)', lat: 30.2672, lng: -97.7431 },
-        { name: 'Canada (Toronto)', lat: 43.6532, lng: -79.3832 },
-        { name: 'Canada (Montreal)', lat: 45.5017, lng: -73.5673 },
-        
-        // Europe
-        { name: 'EU-Central (Frankfurt)', lat: 50.1109, lng: 8.6821 },
-        { name: 'EU-West (London)', lat: 51.5074, lng: -0.1278 },
-        { name: 'EU-West (Paris)', lat: 48.8566, lng: 2.3522 },
-        { name: 'EU-North (Stockholm)', lat: 59.3293, lng: 18.0686 },
-        { name: 'EU-West (Ireland)', lat: 53.3498, lng: -6.2603 },
-        { name: 'EU-South (Milan)', lat: 45.4642, lng: 9.1900 },
-        
-        // Asia Pacific
-        { name: 'Asia-East (Tokyo)', lat: 35.6762, lng: 139.6503 },
-        { name: 'Asia-East (Seoul)', lat: 37.5665, lng: 126.9780 },
-        { name: 'Asia-East (Hong Kong)', lat: 22.3193, lng: 114.1694 },
-        { name: 'Asia-South (Singapore)', lat: 1.3521, lng: 103.8198 },
-        { name: 'Asia-South (Mumbai)', lat: 19.0760, lng: 72.8777 },
-        { name: 'AU-East (Sydney)', lat: -33.8688, lng: 151.2093 },
-        { name: 'AU-South (Melbourne)', lat: -37.8136, lng: 144.9631 },
-        
-        // South America
-        { name: 'SA-East (Sao Paulo)', lat: -23.5505, lng: -46.6333 },
-        { name: 'SA-West (Santiago)', lat: -33.4489, lng: -70.6693 },
-        
-        // Middle East & Africa
-        { name: 'ME-Central (Dubai)', lat: 25.2048, lng: 55.2708 },
-        { name: 'AF-South (Cape Town)', lat: -33.9249, lng: 18.4241 }
-      ];
-      
-      // Generate nodes using shared constant
-      const totalNodes = TOTAL_VALIDATOR_COUNT;
-      
-      for (let i = 1; i <= totalNodes; i++) {
-        const id = i.toString().padStart(5, '0');
-        // Bias towards online status for a healthy network demo
-        const statusRandom = Math.random();
-        let status: 'online' | 'offline' | 'maintenance' = 'online';
-        if (statusRandom > 0.98) status = 'offline';
-        else if (statusRandom > 0.95) status = 'maintenance';
-
-        const loc = locations[Math.floor(Math.random() * locations.length)];
-        
-        // Significantly reduced jitter to keep nodes clustered around cities (land)
-        // +/- 1.5 degrees is roughly +/- 150km, keeping nodes within metro/regional areas
-        // Use a gaussian-like distribution (sum of randoms) to cluster tightly near center
-        const latJitter = ((Math.random() + Math.random() + Math.random()) / 3 - 0.5) * 3; 
-        const lngJitter = ((Math.random() + Math.random() + Math.random()) / 3 - 0.5) * 3;
-        
-        const lat = Math.max(-90, Math.min(90, loc.lat + latJitter));
-        const lng = loc.lng + lngJitter;
-
-        nodes.push({
-          id: `val_${id}`,
-          name: `edge_node_${id}`,
-          status,
-          blocks_mined: Math.floor(Math.random() * 5000) + 10,
-          reputation: 85 + Math.random() * 15, 
-          uptime: 95 + Math.random() * 5,
-          location: loc.name,
-          lat,
-          lng
-        });
+    // Fetch validator data from backend API
+    const loadValidators = async () => {
+      setLoading(true);
+      try {
+        const response = await fetchValidatorNodes(currentPage, itemsPerPage);
+        setValidators(response.validators);
+        setStats(response.stats);
+        setTotalValidators(response.total);
+      } catch (error) {
+        console.error("Failed to load validators:", error);
+      } finally {
+        setLoading(false);
       }
-      
-      // Sort by blocks mined (descending) to show top performers first
-      return nodes.sort((a, b) => b.blocks_mined - a.blocks_mined);
     };
 
-    // Simulate network delay
-    setTimeout(() => {
-      setValidators(generateValidators());
-      setLoading(false);
-    }, 1500);
-  }, []);
-
-  const paginatedValidators = validators.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+    loadValidators();
+  }, [currentPage]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -154,11 +72,11 @@ export default function Validators() {
   };
 
   // Calculate network metrics
-  const onlineCount = validators.filter(v => v.status === 'online').length;
-  const onlineRate = validators.length > 0 ? (onlineCount / validators.length) * 100 : 0;
+  const onlineCount = stats.online;
+  const onlineRate = totalValidators > 0 ? (onlineCount / totalValidators) * 100 : 0;
   const totalBlocks = validators.reduce((acc, v) => acc + v.blocks_mined, 0);
   
-  // Calculate regional distribution
+  // Calculate regional distribution from current page
   const regionStats = validators.reduce((acc, v) => {
     acc[v.location] = (acc[v.location] || 0) + 1;
     return acc;
@@ -167,6 +85,8 @@ export default function Validators() {
   const topRegions = Object.entries(regionStats)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 4);
+
+  const totalPages = Math.ceil(totalValidators / itemsPerPage);
 
   return (
     <div className="space-y-6">
@@ -194,7 +114,7 @@ export default function Validators() {
               <div className="h-full bg-green-500" style={{ width: `${onlineRate}%` }}></div>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              {onlineCount.toLocaleString()} / {validators.length.toLocaleString()} nodes online
+              {onlineCount.toLocaleString()} / {totalValidators.toLocaleString()} nodes online
             </p>
           </CardContent>
         </Card>
@@ -210,31 +130,53 @@ export default function Validators() {
               <span>+12.5% from last epoch</span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Based on {totalBlocks.toLocaleString()} blocks mined
+              Based on {totalBlocks.toLocaleString()} blocks mined (current page)
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-card/50 border-muted">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Regional Distribution</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Node Status Distribution</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {topRegions.map(([region, count], i) => (
-                <div key={region} className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">{region}</span>
-                  <div className="flex items-center gap-2 w-1/2">
-                    <div className="h-1.5 flex-1 bg-secondary rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary" 
-                        style={{ width: `${(count / validators.length) * 100}%` }}
-                      ></div>
-                    </div>
-                    <span className="w-8 text-right">{((count / validators.length) * 100).toFixed(1)}%</span>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-green-500">Online</span>
+                <div className="flex items-center gap-2 w-1/2">
+                  <div className="h-1.5 flex-1 bg-secondary rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-green-500" 
+                      style={{ width: `${totalValidators > 0 ? (stats.online / totalValidators) * 100 : 0}%` }}
+                    ></div>
                   </div>
+                  <span className="w-16 text-right">{stats.online.toLocaleString()}</span>
                 </div>
-              ))}
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-yellow-500">Maintenance</span>
+                <div className="flex items-center gap-2 w-1/2">
+                  <div className="h-1.5 flex-1 bg-secondary rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-yellow-500" 
+                      style={{ width: `${totalValidators > 0 ? (stats.maintenance / totalValidators) * 100 : 0}%` }}
+                    ></div>
+                  </div>
+                  <span className="w-16 text-right">{stats.maintenance.toLocaleString()}</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-red-500">Offline</span>
+                <div className="flex items-center gap-2 w-1/2">
+                  <div className="h-1.5 flex-1 bg-secondary rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-red-500" 
+                      style={{ width: `${totalValidators > 0 ? (stats.offline / totalValidators) * 100 : 0}%` }}
+                    ></div>
+                  </div>
+                  <span className="w-16 text-right">{stats.offline.toLocaleString()}</span>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -289,7 +231,7 @@ export default function Validators() {
               <tbody className="[&_tr:last-child]:border-0">
                 {loading ? (
                   <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading validator network data...</td></tr>
-                ) : paginatedValidators.map((validator, index) => (
+                ) : validators.map((validator, index) => (
                   <tr key={validator.id} className="border-b transition-colors hover:bg-muted/50">
                     <td className="p-4 align-middle font-medium text-muted-foreground">#{(currentPage - 1) * itemsPerPage + index + 1}</td>
                     <td className="p-4 align-middle font-medium flex items-center gap-2">
@@ -322,12 +264,12 @@ export default function Validators() {
           </div>
           
           {/* Pagination Controls */}
-          {!loading && validators.length > 0 && (
+          {!loading && totalValidators > 0 && (
             <div className="flex items-center justify-between px-4 py-4 border-t">
               <div className="text-sm text-muted-foreground">
                 Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to{" "}
-                <span className="font-medium">{Math.min(currentPage * itemsPerPage, validators.length)}</span> of{" "}
-                <span className="font-medium">{validators.length.toLocaleString()}</span> results
+                <span className="font-medium">{Math.min(currentPage * itemsPerPage, totalValidators)}</span> of{" "}
+                <span className="font-medium">{totalValidators.toLocaleString()}</span> results
               </div>
               <div className="flex items-center space-x-2">
                 <button
@@ -338,8 +280,8 @@ export default function Validators() {
                   Previous
                 </button>
                 <button
-                  onClick={() => setCurrentPage(p => Math.min(Math.ceil(validators.length / itemsPerPage), p + 1))}
-                  disabled={currentPage >= Math.ceil(validators.length / itemsPerPage)}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
                   className="px-3 py-1 text-sm border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next

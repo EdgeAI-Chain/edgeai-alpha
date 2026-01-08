@@ -5,6 +5,8 @@ mod crypto;
 mod data_market;
 mod network;
 mod api;
+mod iot;
+mod validators;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -20,7 +22,7 @@ use blockchain::Blockchain;
 use consensus::PoIEConsensus;
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
-use api::{AppState, configure_routes, configure_wallet_routes};
+use api::{AppState, configure_routes, configure_wallet_routes, configure_data_routes};
 
 const DATA_DIR: &str = "/data";
 
@@ -118,6 +120,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_state.clone())
             .configure(configure_routes)
             .configure(configure_wallet_routes)
+            .configure(configure_data_routes)
             .service(Files::new("/", "./static").index_file("index.html"))
     })
     .bind(bind_address)?

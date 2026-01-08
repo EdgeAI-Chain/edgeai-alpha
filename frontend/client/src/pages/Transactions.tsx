@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { QrCode, Building2, Factory, Leaf, HeartPulse, Truck, Zap, ChevronLeft, ChevronRight, ArrowRightLeft } from "lucide-react";
 import QRCode from "react-qr-code";
-import { getIoTTransactions, IoTTransaction } from "@/lib/iotGenerator";
+import { IoTTransaction } from "@/lib/iotGenerator";
+import { fetchIoTTransactions } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -18,26 +19,27 @@ export default function Transactions() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [sectorFilter, setSectorFilter] = useState<string | null>(null);
+  const [totalTransactions, setTotalTransactions] = useState(100000);
   const pageSize = 20;
-  const totalTransactions = 100000;
 
   useEffect(() => {
-    // Simulate fetching IoT transactions
+    // Fetch IoT transactions from backend API
     setLoading(true);
-    // Small delay to simulate network request
-    const timer = setTimeout(() => {
-      const data = getIoTTransactions(page, pageSize);
-      setTransactions(data);
-      setLoading(false);
-    }, 300);
     
-    return () => clearTimeout(timer);
-  }, [page]);
+    const loadTransactions = async () => {
+      try {
+        const response = await fetchIoTTransactions(page, pageSize, sectorFilter || undefined);
+        setTransactions(response.transactions);
+        setTotalTransactions(response.total);
+      } catch (error) {
+        console.error("Failed to load transactions:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const filteredTransactions = transactions.filter(tx => {
-    const matchesSector = sectorFilter ? tx.sector === sectorFilter : true;
-    return matchesSector;
-  });
+    loadTransactions();
+  }, [page, sectorFilter]);
 
   const getSectorIcon = (sector: string) => {
     switch(sector) {
@@ -144,7 +146,7 @@ export default function Transactions() {
               <tbody className="[&_tr:last-child]:border-0">
                 {loading ? (
                   <tr><td colSpan={8} className="p-4 text-center">Loading IoT Data Stream...</td></tr>
-                ) : filteredTransactions.map((tx) => (
+                ) : transactions.map((tx) => (
                   <tr key={tx.id} className="border-b transition-colors hover:bg-muted/50">
                     <td className="p-4 align-middle font-mono text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
@@ -211,7 +213,7 @@ export default function Transactions() {
             <div className="md:hidden space-y-4">
               {loading ? (
                 <div className="p-4 text-center text-muted-foreground">Loading IoT Data Stream...</div>
-              ) : filteredTransactions.map((tx) => (
+              ) : transactions.map((tx) => (
                 <div key={tx.id} className="p-4 border rounded-lg bg-card/50 space-y-3">
                   <div className="flex justify-between items-start">
                     <div className="flex items-center gap-2">

@@ -10,16 +10,19 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     clang \
     libclang-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
 
+# Copy Cargo.toml first (Cargo.lock will be generated)
+COPY Cargo.toml ./
+
 # Copy source code
-COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
-# Build release binary
+# Build release binary (this will generate Cargo.lock)
 RUN cargo build --release
 
 # Stage 2: Runtime
@@ -29,6 +32,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -40,7 +44,7 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/edgeai-node /app/edgeai-node
 
-# Copy static files
+# Copy static files if they exist
 COPY static ./static
 
 # Set ownership

@@ -30,11 +30,19 @@ export default function Blocks() {
     const response = await apiCall<Block[]>(`/blocks?limit=${LIMIT}&offset=${currentOffset}`);
     
     if (response.success && Array.isArray(response.data)) {
-      // Use backend data directly
-      const backendBlocks = response.data;
+      // Sort blocks by index in descending order (newest first)
+      const backendBlocks = [...response.data].sort((a, b) => b.index - a.index);
 
       if (isLoadMore) {
-        setBlocks(prev => [...prev, ...backendBlocks]);
+        // When loading more, append and re-sort to maintain order
+        setBlocks(prev => {
+          const combined = [...prev, ...backendBlocks];
+          // Remove duplicates by index and sort
+          const uniqueBlocks = Array.from(
+            new Map(combined.map(b => [b.index, b])).values()
+          );
+          return uniqueBlocks.sort((a, b) => b.index - a.index);
+        });
       } else {
         setBlocks(backendBlocks);
       }

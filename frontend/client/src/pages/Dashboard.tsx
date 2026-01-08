@@ -86,14 +86,29 @@ export default function Dashboard() {
 
           // Calculate block time relative to previous block (if available)
           if (i > 0) {
-            const t1 = typeof block.timestamp === 'number' && block.timestamp < 10000000000 
-              ? block.timestamp * 1000 
-              : (typeof block.timestamp === 'string' ? new Date(block.timestamp).getTime() : block.timestamp);
+            // Get timestamp from nested header or flat structure
+            let t1: number;
+            if (block.header?.timestamp) {
+              t1 = new Date(block.header.timestamp).getTime();
+            } else if (block.timestamp !== undefined) {
+              t1 = typeof block.timestamp === 'number' && block.timestamp < 10000000000 
+                ? block.timestamp * 1000 
+                : (typeof block.timestamp === 'string' ? new Date(block.timestamp).getTime() : block.timestamp);
+            } else {
+              t1 = Date.now();
+            }
               
             const prevBlock = sortedBlocks[i-1];
-            const t2 = typeof prevBlock.timestamp === 'number' && prevBlock.timestamp < 10000000000 
-              ? prevBlock.timestamp * 1000 
-              : (typeof prevBlock.timestamp === 'string' ? new Date(prevBlock.timestamp).getTime() : prevBlock.timestamp);
+            let t2: number;
+            if (prevBlock.header?.timestamp) {
+              t2 = new Date(prevBlock.header.timestamp).getTime();
+            } else if (prevBlock.timestamp !== undefined) {
+              t2 = typeof prevBlock.timestamp === 'number' && prevBlock.timestamp < 10000000000 
+                ? prevBlock.timestamp * 1000 
+                : (typeof prevBlock.timestamp === 'string' ? new Date(prevBlock.timestamp).getTime() : prevBlock.timestamp);
+            } else {
+              t2 = Date.now();
+            }
             
             const diff = (t1 - t2) / 1000; // seconds
             if (diff > 0 && diff < 3600) {
@@ -106,7 +121,7 @@ export default function Dashboard() {
           totalTx += txCount;
           
           // Estimate hashrate based on difficulty and block time
-          const difficulty = block.difficulty || 2;
+          const difficulty = block.header?.difficulty || block.difficulty || 2;
           const estimatedHashrate = blockTime > 0 ? (difficulty / blockTime) * 100 : 0;
 
           newChartData.push({
@@ -447,9 +462,16 @@ export default function Dashboard() {
                       <div className="text-xs text-muted-foreground">
                         {(() => {
                           try {
-                            const date = typeof block.timestamp === 'string' 
-                              ? new Date(block.timestamp)
-                              : new Date(block.timestamp * 1000);
+                            let date: Date;
+                            if (block.header?.timestamp) {
+                              date = new Date(block.header.timestamp);
+                            } else if (block.timestamp !== undefined) {
+                              date = typeof block.timestamp === 'string' 
+                                ? new Date(block.timestamp)
+                                : new Date(block.timestamp * 1000);
+                            } else {
+                              date = new Date();
+                            }
                             
                             if (isNaN(date.getTime())) {
                               return "Just now";

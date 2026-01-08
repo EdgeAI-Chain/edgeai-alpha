@@ -30,7 +30,7 @@ export default function Blocks() {
     const response = await apiCall<Block[]>(`/blocks?limit=${LIMIT}&offset=${currentOffset}`);
     
     if (response.success && Array.isArray(response.data)) {
-      // Use backend data directly without any timestamp manipulation
+      // Use backend data directly
       const backendBlocks = response.data;
 
       if (isLoadMore) {
@@ -60,27 +60,62 @@ export default function Blocks() {
     toast.success("Hash copied to clipboard");
   };
 
-  // Format timestamp from backend
-  const formatTimestamp = (timestamp: number | string) => {
+  // Get entropy from block - supports both nested (backend) and flat (fallback) structure
+  const getEntropy = (block: Block): string => {
+    // Try nested structure first (from backend)
+    if (block.header?.data_entropy !== undefined) {
+      return block.header.data_entropy.toFixed(4);
+    }
+    // Fallback to flat structure (from simulation)
+    if (block.entropy !== undefined) {
+      return block.entropy.toFixed(4);
+    }
+    return "N/A";
+  };
+
+  // Get timestamp from block - supports both nested (backend) and flat (fallback) structure
+  const getTimestamp = (block: Block): string => {
     let ts: number;
-    if (typeof timestamp === 'number') {
-      // Backend returns seconds, convert to milliseconds if needed
-      ts = timestamp < 10000000000 ? timestamp * 1000 : timestamp;
-    } else {
-      ts = new Date(timestamp).getTime();
+    
+    // Try nested structure first (from backend - ISO 8601 string)
+    if (block.header?.timestamp) {
+      const date = new Date(block.header.timestamp);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleTimeString(undefined, {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+      }
     }
     
-    const date = new Date(ts);
-    if (isNaN(date.getTime())) {
-      return "N/A";
+    // Fallback to flat structure (from simulation - number)
+    if (block.timestamp !== undefined) {
+      ts = typeof block.timestamp === 'number' 
+        ? (block.timestamp < 10000000000 ? block.timestamp * 1000 : block.timestamp)
+        : new Date(block.timestamp).getTime();
+      
+      const date = new Date(ts);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleTimeString(undefined, {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+      }
     }
     
-    return date.toLocaleTimeString(undefined, {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    return "N/A";
+  };
+
+  // Get difficulty from block
+  const getDifficulty = (block: Block): number => {
+    if (block.header?.difficulty !== undefined) {
+      return block.header.difficulty;
+    }
+    return block.difficulty || 2;
   };
 
   return (
@@ -100,7 +135,7 @@ export default function Blocks() {
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Hash</th>
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Txns</th>
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Validator</th>
-                  <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Entropy</th>
+                  <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Entropy (PoIE)</th>
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Time</th>
                 </tr>
               </thead>
@@ -159,10 +194,12 @@ export default function Blocks() {
                       {block.validator || "N/A"}
                     </td>
                     <td className="p-4 align-middle font-mono text-xs">
-                      {block.entropy ? block.entropy.toFixed(4) : "N/A"}
+                      <span className={getEntropy(block) !== "0.0000" ? "text-green-400" : "text-muted-foreground"}>
+                        {getEntropy(block)}
+                      </span>
                     </td>
                     <td className="p-4 align-middle text-muted-foreground font-mono text-xs">
-                      {formatTimestamp(block.timestamp)}
+                      {getTimestamp(block)}
                     </td>
                   </tr>
                 ))}

@@ -51,15 +51,29 @@ export async function apiCall<T>(endpoint: string, options: RequestInit = {}): P
 
 // ============ Block Types ============
 
+// Block header structure from backend
+export interface BlockHeader {
+  version: number;
+  previous_hash: string;
+  merkle_root: string;
+  timestamp: string; // ISO 8601 format from backend
+  difficulty: number;
+  nonce: number;
+  data_entropy: number; // Shannon entropy calculated by PoIE
+}
+
+// Full block structure from backend
 export interface Block {
   index: number;
-  timestamp: number;
+  header?: BlockHeader; // Optional for backward compatibility with fallback simulation
   transactions: Transaction[];
-  previous_hash: string;
   hash: string;
   validator: string;
-  entropy: number;
+  // Legacy flat fields for backward compatibility (used in fallback simulation)
+  timestamp?: number;
+  entropy?: number;
   difficulty?: number;
+  previous_hash?: string;
 }
 
 export interface Transaction {

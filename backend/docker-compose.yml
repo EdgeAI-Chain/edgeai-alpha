@@ -1,0 +1,35 @@
+# Docker Compose for EdgeAI Blockchain
+# Run with: docker-compose up -d
+
+version: '3.8'
+
+services:
+  edgeai-blockchain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: edgeai-blockchain
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/chain"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - edgeai-data:/app/data
+    networks:
+      - edgeai-network
+
+networks:
+  edgeai-network:
+    driver: bridge
+
+volumes:
+  edgeai-data:
+    driver: local

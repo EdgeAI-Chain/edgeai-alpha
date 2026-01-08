@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EdgeAI Blockchain Explorer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #10b981;
+            --accent: #f59e0b;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-card-hover: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-dark) 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+        
+        .logo-text {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .nav-links { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        
+        .nav-link {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        
+        .nav-link.wallet-link {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+        
+        .main { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+        
+        .page { display: none; }
+        .page.active { display: block; }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+        }
+        
+        .stat-label { color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem; }
+        .stat-value { font-size: 1.75rem; font-weight: 700; }
+        .stat-value.primary { color: var(--primary); }
+        .stat-value.secondary { color: var(--secondary); }
+        .stat-value.accent { color: var(--accent); }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .form-group { margin-bottom: 1rem; }
+        .form-label { display: block; color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem; }
+        
+        .form-input, .form-textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .form-input:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .form-textarea { min-height: 100px; resize: vertical; }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-size: 0.95rem;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: var(--secondary);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        
+        .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; }
+        
+        .result-box {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        
+        .result-box.success { border-color: var(--success); }
+        .result-box.error { border-color: var(--error); }
+        
+        .wallet-info {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-dark) 100%);
+            border: 2px solid var(--primary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .wallet-address {
+            font-family: monospace;
+            font-size: 1rem;
+            color: var(--secondary);
+            word-break: break-all;
+        }
+        
+        .wallet-balance {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin: 0.5rem 0;
+        }
+        
+        .key-display {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            font-family: monospace;
+            font-size: 0.75rem;
+            word-break: break-all;
+        }
+        
+        .key-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+        
+        .warning-box {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--warning);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: var(--warning);
+            font-size: 0.875rem;
+        }
+        
+        .copy-btn {
+            background: var(--bg-card-hover);
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+        
+        .copy-btn:hover { color: var(--text-primary); }
+        
+        .table { width: 100%; border-collapse: collapse; }
+        .table th, .table td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+        .table th { color: var(--text-secondary); font-weight: 500; }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .badge-success { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge-primary { background: rgba(99, 102, 241, 0.2); color: var(--primary); }
+        
+        .hidden { display: none !important; }
+        
+        @media (max-width: 768px) {
+            .grid-2 { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-icon"><i class="fas fa-cube"></i></div>
+                <span class="logo-text">EdgeAI Explorer</span>
+            </div>
+            <nav class="nav-links">
+                <a class="nav-link active" onclick="showPage('dashboard', event)"><i class="fas fa-chart-line"></i> Dashboard</a>
+                <a class="nav-link" onclick="showPage('blocks', event)"><i class="fas fa-cubes"></i> Blocks</a>
+                <a class="nav-link" onclick="showPage('transactions', event)"><i class="fas fa-exchange-alt"></i> Transactions</a>
+                <a class="nav-link" onclick="showPage('marketplace', event)"><i class="fas fa-store"></i> Marketplace</a>
+                <a class="nav-link" onclick="showPage('tools', event)"><i class="fas fa-tools"></i> Tools</a>
+                <a class="nav-link wallet-link" onclick="showPage('wallet', event)"><i class="fas fa-wallet"></i> Wallet</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <!-- Dashboard Page -->
+        <div id="dashboard" class="page active">
+            <h2 style="margin-bottom: 1.5rem;">Dashboard</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Block Height</div>
+                    <div class="stat-value primary" id="block-height">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Transactions</div>
+                    <div class="stat-value secondary" id="total-txs">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Accounts</div>
+                    <div class="stat-value accent" id="total-accounts">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Data Entries</div>
+                    <div class="stat-value" id="data-entries">-</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title"><i class="fas fa-clock"></i> Latest Blocks</div>
+                <table class="table" id="latest-blocks-table">
+                    <thead><tr><th>Index</th><th>Hash</th><th>Transactions</th><th>Validator</th><th>Entropy</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Blocks Page -->
+        <div id="blocks" class="page">
+            <h2 style="margin-bottom: 1.5rem;">Blocks</h2>
+            <div class="card">
+                <table class="table" id="blocks-table">
+                    <thead><tr><th>Index</th><th>Hash</th><th>Transactions</th><th>Validator</th><th>Timestamp</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Transactions Page -->
+        <div id="transactions" class="page">
+            <h2 style="margin-bottom: 1.5rem;">Transactions</h2>
+            <div class="card">
+                <div class="card-title"><i class="fas fa-hourglass-half"></i> Pending Transactions</div>
+                <table class="table" id="pending-txs-table">
+                    <thead><tr><th>Hash</th><th>Type</th><th>From</th><th>Amount</th><th>Signed</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Marketplace Page -->
+        <div id="marketplace" class="page">
+            <h2 style="margin-bottom: 1.5rem;">Data Marketplace</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Listings</div>
+                    <div class="stat-value primary" id="market-listings">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Volume</div>
+                    <div class="stat-value secondary" id="market-volume">-</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title"><i class="fas fa-database"></i> Available Data</div>
+                <table class="table" id="marketplace-table">
+                    <thead><tr><th>Title</th><th>Category</th><th>Price</th><th>Quality</th><th>Owner</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tools Page -->
+        <div id="tools" class="page">
+            <h2 style="margin-bottom: 1.5rem;">Tools</h2>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-paper-plane"></i> Transfer Tokens</div>
+                    <div class="form-group">
+                        <label class="form-label">From Address</label>
+                        <input type="text" class="form-input" id="transfer-from" placeholder="genesis">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">To Address</label>
+                        <input type="text" class="form-input" id="transfer-to" placeholder="Recipient address">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amount</label>
+                        <input type="number" class="form-input" id="transfer-amount" placeholder="100">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendTransfer()"><i class="fas fa-paper-plane"></i> Send Transfer</button>
+                    <div id="transfer-result" class="result-box hidden"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-upload"></i> Contribute Data</div>
+                    <div class="form-group">
+                        <label class="form-label">Sender Address</label>
+                        <input type="text" class="form-input" id="data-sender" placeholder="Your address">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Data Content</label>
+                        <textarea class="form-textarea" id="data-content" placeholder="Enter your data (IoT sensor readings, AI model data, etc.)"></textarea>
+                    </div>
+                    <button class="btn btn-secondary" onclick="contributeData()"><i class="fas fa-upload"></i> Contribute Data</button>
+                    <div id="contribute-result" class="result-box hidden"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-hammer"></i> Mine Block</div>
+                    <div class="form-group">
+                        <label class="form-label">Validator Address</label>
+                        <input type="text" class="form-input" id="mine-validator" placeholder="Your validator address">
+                    </div>
+                    <button class="btn btn-warning" onclick="mineBlock()"><i class="fas fa-hammer"></i> Mine Block</button>
+                    <div id="mine-result" class="result-box hidden"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-search"></i> Check Balance</div>
+                    <div class="form-group">
+                        <label class="form-label">Address</label>
+                        <input type="text" class="form-input" id="balance-address" placeholder="Address to check">
+                    </div>
+                    <button class="btn btn-primary" onclick="checkBalance()"><i class="fas fa-search"></i> Check Balance</button>
+                    <div id="balance-result" class="result-box hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Wallet Page -->
+        <div id="wallet" class="page">
+            <h2 style="margin-bottom: 1.5rem;"><i class="fas fa-wallet"></i> Wallet Management</h2>
+            
+            <!-- Current Wallet Info -->
+            <div id="wallet-info" class="wallet-info hidden">
+                <div class="card-title"><i class="fas fa-user-circle"></i> Current Wallet</div>
+                <div class="key-label">Address</div>
+                <div class="wallet-address" id="current-address">-</div>
+                <div class="wallet-balance" id="current-balance">- EDGE</div>
+                <div class="key-label">Public Key <button class="copy-btn" onclick="copyToClipboard('current-pubkey')"><i class="fas fa-copy"></i></button></div>
+                <div class="key-display" id="current-pubkey">-</div>
+                <div class="key-label">Secret Key (KEEP PRIVATE!) <button class="copy-btn" onclick="copyToClipboard('current-secret')"><i class="fas fa-copy"></i></button></div>
+                <div class="key-display" id="current-secret" style="color: var(--error);">-</div>
+                <div class="warning-box">
+                    <i class="fas fa-exclamation-triangle"></i> <strong>Important:</strong> Save your secret key securely. Anyone with this key can access your funds. Never share it with anyone!
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Generate New Wallet -->
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-plus-circle"></i> Generate New Wallet</div>
+                    <p style="color: var(--text-secondary); margin-bottom: 1rem;">Create a new wallet with a unique address and key pair.</p>
+                    <button class="btn btn-primary" onclick="generateWallet()"><i class="fas fa-key"></i> Generate Wallet</button>
+                    <div id="generate-result" class="result-box hidden"></div>
+                </div>
+
+                <!-- Import Wallet -->
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-file-import"></i> Import Wallet</div>
+                    <div class="form-group">
+                        <label class="form-label">Secret Key (Hex)</label>
+                        <input type="password" class="form-input" id="import-secret" placeholder="Enter your secret key">
+                    </div>
+                    <button class="btn btn-secondary" onclick="importWallet()"><i class="fas fa-download"></i> Import Wallet</button>
+                    <div id="import-result" class="result-box hidden"></div>
+                </div>
+
+                <!-- Signed Transfer -->
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-signature"></i> Signed Transfer</div>
+                    <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">Send tokens using cryptographic signature. Only you can authorize transfers from your wallet.</p>
+                    <div class="form-group">
+                        <label class="form-label">To Address</label>
+                        <input type="text" class="form-input" id="signed-transfer-to" placeholder="Recipient address">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amount</label>
+                        <input type="number" class="form-input" id="signed-transfer-amount" placeholder="100">
+                    </div>
+                    <button class="btn btn-primary" onclick="signedTransfer()"><i class="fas fa-paper-plane"></i> Sign & Send</button>
+                    <div id="signed-transfer-result" class="result-box hidden"></div>
+                </div>
+
+                <!-- Signed Data Contribution -->
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-file-signature"></i> Signed Data Contribution</div>
+                    <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">Contribute data with cryptographic proof of ownership.</p>
+                    <div class="form-group">
+                        <label class="form-label">Data Content</label>
+                        <textarea class="form-textarea" id="signed-data-content" placeholder="Enter your data"></textarea>
+                    </div>
+                    <button class="btn btn-secondary" onclick="signedContribute()"><i class="fas fa-upload"></i> Sign & Contribute</button>
+                    <div id="signed-contribute-result" class="result-box hidden"></div>
+                </div>
+            </div>
+
+            <!-- Signature Tools -->
+            <div class="card">
+                <div class="card-title"><i class="fas fa-shield-alt"></i> Signature Tools</div>
+                <div class="grid-2">
+                    <div>
+                        <div class="form-group">
+                            <label class="form-label">Message to Sign</label>
+                            <input type="text" class="form-input" id="sign-message" placeholder="Enter message">
+                        </div>
+                        <button class="btn btn-primary" onclick="signMessage()"><i class="fas fa-pen"></i> Sign Message</button>
+                        <div id="sign-result" class="result-box hidden"></div>
+                    </div>
+                    <div>
+                        <div class="form-group">
+                            <label class="form-label">Public Key</label>
+                            <input type="text" class="form-input" id="verify-pubkey" placeholder="Public key">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Message</label>
+                            <input type="text" class="form-input" id="verify-message" placeholder="Original message">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Signature</label>
+                            <input type="text" class="form-input" id="verify-signature" placeholder="Signature to verify">
+                        </div>
+                        <button class="btn btn-secondary" onclick="verifySignature()"><i class="fas fa-check-circle"></i> Verify</button>
+                        <div id="verify-result" class="result-box hidden"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = '';
+        let currentWallet = null;
+
+        // Page Navigation
+        function showPage(pageId, event) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-link').forEach(n => n.classList.remove('active'));
+            
+            const page = document.getElementById(pageId);
+            if (page) page.classList.add('active');
+            
+            if (event && event.target) {
+                const link = event.target.closest('.nav-link');
+                if (link) link.classList.add('active');
+            }
+            
+            if (pageId === 'dashboard') loadDashboard();
+            if (pageId === 'blocks') loadBlocks();
+            if (pageId === 'transactions') loadTransactions();
+            if (pageId === 'marketplace') loadMarketplace();
+            if (pageId === 'wallet') updateWalletDisplay();
+        }
+
+        // API Calls
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const options = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) options.body = JSON.stringify(body);
+            const response = await fetch(API_BASE + endpoint, options);
+            return response.json();
+        }
+
+        // Dashboard
+        async function loadDashboard() {
+            const chain = await apiCall('/api/chain');
+            if (chain.success) {
+                document.getElementById('block-height').textContent = chain.data.block_height;
+                document.getElementById('total-txs').textContent = chain.data.total_transactions;
+                document.getElementById('total-accounts').textContent = chain.data.total_accounts;
+                document.getElementById('data-entries').textContent = chain.data.total_data_entries;
+            }
+            
+            const blocks = await apiCall('/api/blocks?limit=5');
+            if (blocks.success) {
+                const tbody = document.querySelector('#latest-blocks-table tbody');
+                tbody.innerHTML = blocks.data.map(b => `
+                    <tr>
+                        <td>${b.index}</td>
+                        <td style="font-family: monospace; font-size: 0.8rem;">${b.hash.substring(0, 16)}...</td>
+                        <td>${b.transactions.length}</td>
+                        <td>${b.validator}</td>
+                        <td>${b.header.data_entropy.toFixed(2)}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        // Blocks
+        async function loadBlocks() {
+            const blocks = await apiCall('/api/blocks?limit=20');
+            if (blocks.success) {
+                const tbody = document.querySelector('#blocks-table tbody');
+                tbody.innerHTML = blocks.data.map(b => `
+                    <tr>
+                        <td>${b.index}</td>
+                        <td style="font-family: monospace; font-size: 0.8rem;">${b.hash.substring(0, 20)}...</td>
+                        <td>${b.transactions.length}</td>
+                        <td>${b.validator}</td>
+                        <td>${new Date(b.header.timestamp).toLocaleString()}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        // Transactions
+        async function loadTransactions() {
+            // 1. Load Pending Transactions
+            const pending = await apiCall('/api/transactions/pending');
+            const pendingTbody = document.querySelector('#pending-txs-table tbody');
+            
+            // Handle both success array and error case (which means empty)
+            let pendingTxs = [];
+            if (pending.success && Array.isArray(pending.data)) {
+                pendingTxs = pending.data;
+            } else if (Array.isArray(pending)) {
+                pendingTxs = pending;
+            }
+            
+            pendingTbody.innerHTML = pendingTxs.length ? pendingTxs.map(tx => renderTxRow(tx)).join('') 
+                : '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">No pending transactions (All processed)</td></tr>';
+
+            // 2. Load Recent Confirmed Transactions (from blocks)
+            // We'll fetch the latest blocks and extract transactions from them
+            const blocks = await apiCall('/api/blocks?limit=10');
+            if (blocks.success && Array.isArray(blocks.data)) {
+                const confirmedTxs = blocks.data.flatMap(b => b.transactions).slice(0, 20); // Get last 20 txs
+                
+                // Check if we need to create the confirmed table if it doesn't exist
+                let confirmedSection = document.getElementById('confirmed-txs-section');
+                if (!confirmedSection) {
+                    const container = document.getElementById('transactions');
+                    const newSection = document.createElement('div');
+                    newSection.id = 'confirmed-txs-section';
+                    newSection.className = 'card';
+                    newSection.style.marginTop = '2rem';
+                    newSection.innerHTML = `
+                        <div class="card-title"><i class="fas fa-check-circle"></i> Recent Confirmed Transactions</div>
+                        <div class="table-container">
+                            <table class="table" id="confirmed-txs-table">
+                                <thead>
+                                    <tr>
+                                        <th>Hash</th>
+                                        <th>Type</th>
+                                        <th>From</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    `;
+                    container.appendChild(newSection);
+                }
+                
+                const confirmedTbody = document.querySelector('#confirmed-txs-table tbody');
+                confirmedTbody.innerHTML = confirmedTxs.length ? confirmedTxs.map(tx => renderTxRow(tx, true)).join('')
+                    : '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">No confirmed transactions found</td></tr>';
+            }
+        }
+
+        function renderTxRow(tx, isConfirmed = false) {
+            // Safe access to nested properties
+            const amount = tx.outputs && tx.outputs.length > 0 ? tx.outputs.reduce((s, o) => s + (o.amount || 0), 0) : 0;
+            const hash = tx.hash || tx.id || "Unknown";
+            const sender = tx.sender || "Unknown";
+            const statusBadge = isConfirmed 
+                ? '<span class="badge badge-success">✓ Confirmed</span>' 
+                : (tx.signature ? '<span class="badge badge-primary">✓ Signed</span>' : '<span class="badge badge-warning">○ Unsigned</span>');
+            
+            return `
+                <tr>
+                    <td style="font-family: monospace; font-size: 0.8rem;">${hash.substring(0, 16)}...</td>
+                    <td><span class="badge badge-secondary">${tx.tx_type || 'Unknown'}</span></td>
+                    <td>${sender.substring(0, 12)}...</td>
+                    <td>${amount}</td>
+                    <td>${statusBadge}</td>
+                </tr>
+            `;
+        }
+
+        // Marketplace
+        async function loadMarketplace() {
+            const stats = await apiCall('/api/marketplace/stats');
+            if (stats.success) {
+                document.getElementById('market-listings').textContent = stats.data.total_listings;
+                document.getElementById('market-volume').textContent = stats.data.total_volume + ' EDGE';
+            }
+            
+            const listings = await apiCall('/api/marketplace');
+            if (listings.success) {
+                const tbody = document.querySelector('#marketplace-table tbody');
+                tbody.innerHTML = listings.data.length ? listings.data.map(l => `
+                    <tr>
+                        <td>${l.title}</td>
+                        <td><span class="badge badge-primary">${l.category}</span></td>
+                        <td>${l.price} EDGE</td>
+                        <td>${(l.quality_score * 100).toFixed(1)}%</td>
+                        <td>${l.owner.substring(0, 12)}...</td>
+                    </tr>
+                `).join('') : '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">No listings available</td></tr>';
+            }
+        }
+
+        // Tools Functions
+        async function sendTransfer() {
+            const result = await apiCall('/api/transactions/transfer', 'POST', {
+                from: document.getElementById('transfer-from').value || 'genesis',
+                to: document.getElementById('transfer-to').value,
+                amount: parseInt(document.getElementById('transfer-amount').value)
+            });
+            showResult('transfer-result', result);
+        }
+
+        async function contributeData() {
+            const result = await apiCall('/api/transactions/contribute', 'POST', {
+                sender: document.getElementById('data-sender').value,
+                data: document.getElementById('data-content').value
+            });
+            showResult('contribute-result', result);
+        }
+
+        async function mineBlock() {
+            const result = await apiCall('/api/mine', 'POST', {
+                validator: document.getElementById('mine-validator').value
+            });
+            showResult('mine-result', result);
+            loadDashboard();
+        }
+
+        async function checkBalance() {
+            const address = document.getElementById('balance-address').value;
+            const result = await apiCall(`/api/accounts/${address}/balance`);
+            showResult('balance-result', result);
+        }
+
+        // Wallet Functions
+        async function generateWallet() {
+            const result = await apiCall('/api/wallet/generate', 'POST');
+            if (result.success) {
+                currentWallet = result.data;
+                updateWalletDisplay();
+                showResult('generate-result', { success: true, data: 'Wallet generated successfully!' });
+            } else {
+                showResult('generate-result', result);
+            }
+        }
+
+        async function importWallet() {
+            const secretKey = document.getElementById('import-secret').value;
+            const result = await apiCall('/api/wallet/import', 'POST', { secret_key: secretKey });
+            if (result.success) {
+                currentWallet = result.data;
+                updateWalletDisplay();
+                showResult('import-result', { success: true, data: 'Wallet imported successfully!' });
+            } else {
+                showResult('import-result', result);
+            }
+        }
+
+        async function updateWalletDisplay() {
+            const walletInfo = document.getElementById('wallet-info');
+            if (currentWallet) {
+                walletInfo.classList.remove('hidden');
+                document.getElementById('current-address').textContent = currentWallet.address;
+                document.getElementById('current-pubkey').textContent = currentWallet.public_key;
+                document.getElementById('current-secret').textContent = currentWallet.secret_key;
+                
+                // Fetch balance
+                const balance = await apiCall(`/api/accounts/${currentWallet.address}/balance`);
+                if (balance.success) {
+                    document.getElementById('current-balance').textContent = balance.data.balance + ' EDGE';
+                }
+            } else {
+                walletInfo.classList.add('hidden');
+            }
+        }
+
+        async function signedTransfer() {
+            if (!currentWallet) {
+                showResult('signed-transfer-result', { success: false, error: 'Please generate or import a wallet first' });
+                return;
+            }
+            
+            const to = document.getElementById('signed-transfer-to').value;
+            const amount = parseInt(document.getElementById('signed-transfer-amount').value);
+            
+            // First, prepare the transaction to get the hash to sign
+            const prepared = await apiCall('/api/wallet/prepare-transfer', 'POST', {
+                from: currentWallet.address,
+                to: to,
+                amount: amount
+            });
+            
+            if (!prepared.success) {
+                showResult('signed-transfer-result', prepared);
+                return;
+            }
+            
+            // Sign the message
+            const signed = await apiCall('/api/wallet/sign', 'POST', {
+                secret_key: currentWallet.secret_key,
+                message: prepared.data.message_to_sign
+            });
+            
+            if (!signed.success) {
+                showResult('signed-transfer-result', signed);
+                return;
+            }
+            
+            // Submit the signed transaction
+            const result = await apiCall('/api/wallet/transfer', 'POST', {
+                from: currentWallet.address,
+                to: to,
+                amount: amount,
+                public_key: currentWallet.public_key,
+                signature: signed.data.signature
+            });
+            
+            showResult('signed-transfer-result', result);
+            updateWalletDisplay();
+        }
+
+        async function signedContribute() {
+            if (!currentWallet) {
+                showResult('signed-contribute-result', { success: false, error: 'Please generate or import a wallet first' });
+                return;
+            }
+            
+            const data = document.getElementById('signed-data-content').value;
+            
+            // Sign the data
+            const signed = await apiCall('/api/wallet/sign', 'POST', {
+                secret_key: currentWallet.secret_key,
+                message: data
+            });
+            
+            if (!signed.success) {
+                showResult('signed-contribute-result', signed);
+                return;
+            }
+            
+            // Submit the signed contribution
+            const result = await apiCall('/api/wallet/contribute', 'POST', {
+                sender: currentWallet.address,
+                data: data,
+                public_key: currentWallet.public_key,
+                signature: signed.data.signature
+            });
+            
+            showResult('signed-contribute-result', result);
+        }
+
+        async function signMessage() {
+            if (!currentWallet) {
+                showResult('sign-result', { success: false, error: 'Please generate or import a wallet first' });
+                return;
+            }
+            
+            const message = document.getElementById('sign-message').value;
+            const result = await apiCall('/api/wallet/sign', 'POST', {
+                secret_key: currentWallet.secret_key,
+                message: message
+            });
+            
+            showResult('sign-result', result);
+        }
+
+        async function verifySignature() {
+            const result = await apiCall('/api/wallet/verify', 'POST', {
+                public_key: document.getElementById('verify-pubkey').value,
+                message: document.getElementById('verify-message').value,
+                signature: document.getElementById('verify-signature').value
+            });
+            
+            showResult('verify-result', result);
+        }
+
+        function copyToClipboard(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text);
+            alert('Copied to clipboard!');
+        }
+
+        function showResult(elementId, result) {
+            const el = document.getElementById(elementId);
+            el.classList.remove('hidden', 'success', 'error');
+            el.classList.add(result.success ? 'success' : 'error');
+            el.textContent = JSON.stringify(result, null, 2);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check for page parameter in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const page = urlParams.get('page');
+            
+            if (page && ['dashboard', 'blocks', 'transactions', 'marketplace', 'tools', 'wallet'].includes(page)) {
+                showPage(page);
+            } else {
+                loadDashboard();
+            }
+            
+            // Auto refresh dashboard if active
+            setInterval(() => {
+                const activePage = document.querySelector('.page.active');
+                if (activePage && activePage.id === 'dashboard') loadDashboard();
+            }, 10000);
+        });
+    </script>
+</body>
+</html>

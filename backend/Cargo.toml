@@ -1,0 +1,56 @@
+[package]
+name = "edgeai_blockchain"
+version = "0.1.0"
+edition = "2021"
+authors = ["EdgeAI Team"]
+description = "A blockchain system designed for Edge AI applications with PoIE consensus"
+license = "MIT"
+
+[dependencies]
+# Cryptography
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Async runtime and networking
+tokio = { version = "1.35", features = ["full"] }
+tokio-tungstenite = "0.21"
+futures = "0.3"
+
+# Web API
+actix-web = "4"
+actix-cors = "0.7"
+actix-files = "0.6"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Database (simple file-based)
+rocksdb = "0.22"
+
+# Math for entropy calculation
+statrs = "0.17"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bin]]
+name = "edgeai-node"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true

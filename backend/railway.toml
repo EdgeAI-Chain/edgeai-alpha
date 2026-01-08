@@ -1,0 +1,12 @@
+# Railway.app Configuration
+# Deploy from GitHub or CLI
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "./edgeai-blockchain"
+healthcheckPath = "/api/chain"
+healthcheckTimeout = 30
+restartPolicyType = "always"

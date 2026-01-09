@@ -121,6 +121,8 @@ impl ValidatorGenerator {
         let mut online = 0u64;
         let mut offline = 0u64;
         let mut maintenance = 0u64;
+        let mut total_blocks_mined = 0u64;
+        let mut total_reputation = 0.0f64;
 
         for i in 0..self.total_count {
             let validator = self.generate_validator(i);
@@ -129,13 +131,66 @@ impl ValidatorGenerator {
                 ValidatorStatus::Offline => offline += 1,
                 ValidatorStatus::Maintenance => maintenance += 1,
             }
+            total_blocks_mined += validator.blocks_mined;
+            total_reputation += validator.reputation;
         }
+
+        // 计算 Network Entropy (PoIE 核心指标)
+        // 基于 Shannon 信息熵公式: H = -Σ(p_i * log2(p_i))
+        // 这里我们使用验证者的区块贡献比例作为概率分布
+        let network_entropy = self.calculate_network_entropy(total_blocks_mined);
+        let avg_reputation = if self.total_count > 0 {
+            total_reputation / self.total_count as f64
+        } else {
+            0.0
+        };
 
         ValidatorStats {
             online,
             offline,
             maintenance,
+            network_entropy,
+            total_blocks_mined,
+            avg_reputation,
         }
+    }
+
+    /// 计算网络熵 (Network Entropy)
+    /// 基于验证者区块贡献的 Shannon 信息熵
+    fn calculate_network_entropy(&self, total_blocks: u64) -> f64 {
+        if total_blocks == 0 {
+            return 0.0;
+        }
+
+        let mut entropy = 0.0f64;
+        
+        // 为了性能，我们抽样计算熵值
+        let sample_size = self.total_count.min(1000);
+        let step = if self.total_count > sample_size {
+            self.total_count / sample_size
+        } else {
+            1
+        };
+
+        let mut sampled_blocks = 0u64;
+        let mut contributions: Vec<u64> = Vec::new();
+
+        for i in (0..self.total_count).step_by(step as usize) {
+            let validator = self.generate_validator(i);
+            contributions.push(validator.blocks_mined);
+            sampled_blocks += validator.blocks_mined;
+        }
+
+        // 计算 Shannon 熵
+        for blocks in contributions {
+            if blocks > 0 && sampled_blocks > 0 {
+                let p = blocks as f64 / sampled_blocks as f64;
+                entropy -= p * p.log2();
+            }
+        }
+
+        // 缩放到合理范围 (基于总区块数)
+        entropy * (total_blocks as f64).log2().max(1.0)
     }
 
     /// 生成地图标记（聚合）

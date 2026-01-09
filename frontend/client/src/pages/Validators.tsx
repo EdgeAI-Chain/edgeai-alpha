@@ -10,7 +10,14 @@ import { Validator } from "@/lib/validators";
 
 export default function Validators() {
   const [validators, setValidators] = useState<Validator[]>([]);
-  const [stats, setStats] = useState<ValidatorStats>({ online: 0, offline: 0, maintenance: 0 });
+  const [stats, setStats] = useState<ValidatorStats>({
+    online: 0,
+    offline: 0,
+    maintenance: 0,
+    network_entropy: 0,
+    total_blocks_mined: 0,
+    avg_reputation: 0,
+  });
   const [totalValidators, setTotalValidators] = useState(0);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -124,13 +131,13 @@ export default function Validators() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Network Entropy</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalStake.toFixed(2)} <span className="text-sm font-normal">bits</span></div>
+            <div className="text-2xl font-bold">{stats.network_entropy?.toFixed(2) || '0.00'} <span className="text-sm font-normal">bits</span></div>
             <div className="flex items-center gap-2 mt-2 text-xs text-green-500">
               <Activity className="h-3 w-3" />
               <span>PoIE consensus metric</span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Cumulative information entropy from {totalBlocks.toLocaleString()} blocks
+              Cumulative information entropy from {(stats.total_blocks_mined || totalBlocks).toLocaleString()} blocks
             </p>
           </CardContent>
         </Card>

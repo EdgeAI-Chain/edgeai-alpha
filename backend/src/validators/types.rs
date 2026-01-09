@@ -39,6 +39,12 @@ pub struct ValidatorStats {
     pub online: u64,
     pub offline: u64,
     pub maintenance: u64,
+    /// Network Entropy - PoIE 核心指标，基于验证者贡献的信息熵计算
+    pub network_entropy: f64,
+    /// 总挖矿区块数
+    pub total_blocks_mined: u64,
+    /// 平均信誉值
+    pub avg_reputation: f64,
 }
 
 /// 地球标记点

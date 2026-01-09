@@ -149,6 +149,12 @@ export interface ValidatorStats {
   online: number;
   offline: number;
   maintenance: number;
+  /** Network Entropy - PoIE 核心指标 */
+  network_entropy: number;
+  /** 总挖矿区块数 */
+  total_blocks_mined: number;
+  /** 平均信誉值 */
+  avg_reputation: number;
 }
 
 export interface ValidatorListResponse {
@@ -203,10 +209,30 @@ export async function fetchValidatorNodes(
     const validators = allValidators.slice(start, start + limit);
     
     // 计算统计信息
+    const totalBlocksMined = allValidators.reduce((acc, v) => acc + v.blocks_mined, 0);
+    const avgReputation = allValidators.length > 0 
+      ? allValidators.reduce((acc, v) => acc + v.reputation, 0) / allValidators.length 
+      : 0;
+    
+    // 计算 Network Entropy (Shannon 信息熵)
+    let networkEntropy = 0;
+    if (totalBlocksMined > 0) {
+      for (const v of allValidators) {
+        if (v.blocks_mined > 0) {
+          const p = v.blocks_mined / totalBlocksMined;
+          networkEntropy -= p * Math.log2(p);
+        }
+      }
+      networkEntropy *= Math.log2(totalBlocksMined);
+    }
+
     const stats: ValidatorStats = {
       online: allValidators.filter(v => v.status === 'online').length,
       offline: allValidators.filter(v => v.status === 'offline').length,
       maintenance: allValidators.filter(v => v.status === 'maintenance').length,
+      network_entropy: networkEntropy,
+      total_blocks_mined: totalBlocksMined,
+      avg_reputation: avgReputation,
     };
     
     return {

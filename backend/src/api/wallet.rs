@@ -376,6 +376,197 @@ pub async fn submit_signed_data_contribution(
     }
 }
 
+// ============ External IoT Device API ============
+
+/// Request structure for external IoT device data submission
+/// This API allows real IoT devices to submit telemetry data to the blockchain
+#[derive(Debug, Deserialize)]
+pub struct ExternalIoTDataRequest {
+    /// Device identifier (will be used as sender address)
+    pub device_id: String,
+    /// Device API key for authentication
+    pub api_key: String,
+    /// Raw telemetry data in JSON format
+    pub telemetry: serde_json::Value,
+    /// Data category (SmartCity, Manufacturing, Agriculture, Energy, Healthcare, Logistics, EdgeAI)
+    pub category: String,
+    /// Optional geographic location [latitude, longitude]
+    pub location: Option<[f64; 2]>,
+}
+
+/// Response for IoT data submission
+#[derive(Debug, Serialize)]
+pub struct IoTSubmissionResponse {
+    pub tx_hash: String,
+    pub device_id: String,
+    pub reward: u64,
+    pub quality_score: f64,
+    pub block_pending: bool,
+}
+
+/// Submit IoT telemetry data from external devices
+/// 
+/// # Endpoint
+/// POST /api/iot/submit
+/// 
+/// # Request Body
+/// ```json
+/// {
+///   "device_id": "my_sensor_001",
+///   "api_key": "your_api_key",
+///   "telemetry": {"temperature": 25.5, "humidity": 60},
+///   "category": "SmartCity",
+///   "location": [1.3521, 103.8198]
+/// }
+/// ```
+/// 
+/// # Response
+/// ```json
+/// {
+///   "success": true,
+///   "data": {
+///     "tx_hash": "0x...",
+///     "device_id": "my_sensor_001",
+///     "reward": 50,
+///     "quality_score": 0.85,
+///     "block_pending": true
+///   }
+/// }
+/// ```
+pub async fn submit_iot_data(
+    data: web::Data<AppState>,
+    body: web::Json<ExternalIoTDataRequest>,
+) -> impl Responder {
+    // Validate category
+    let valid_categories = ["SmartCity", "Manufacturing", "Agriculture", "Energy", "Healthcare", "Logistics", "EdgeAI", "General"];
+    if !valid_categories.contains(&body.category.as_str()) {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(&format!(
+                "Invalid category. Must be one of: {:?}", valid_categories
+            )));
+    }
+    
+    // TODO: Validate API key against registered devices
+    // For now, accept any non-empty API key for testing
+    if body.api_key.is_empty() {
+        return HttpResponse::Unauthorized()
+            .json(ApiResponse::<()>::error("API key required"));
+    }
+    
+    // Build telemetry JSON string
+    let telemetry_str = body.telemetry.to_string();
+    
+    // Build full data payload
+    let (lat, lng) = body.location.map(|l| (l[0], l[1])).unwrap_or((0.0, 0.0));
+    let timestamp = chrono::Utc::now().timestamp();
+    
+    let full_data = format!(
+        r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{},"source":"external"}}",
+        body.device_id, body.category, telemetry_str, lat, lng, timestamp
+    );
+    
+    // Calculate reward based on data size and category
+    let data_size = full_data.len() as u64;
+    let base_reward = 30 + (data_size / 20);
+    let category_bonus: u64 = match body.category.as_str() {
+        "Healthcare" => 20,  // Higher value for medical data
+        "Manufacturing" => 15,
+        "Energy" => 15,
+        "Agriculture" => 10,
+        _ => 5,
+    };
+    let reward = base_reward + category_bonus;
+    
+    // Create transaction
+    use crate::blockchain::transaction::{TxOutput, TransactionType};
+    
+    let output = TxOutput {
+        amount: reward,
+        recipient: body.device_id.clone(),
+        data_hash: Some(format!("ext_{:x}", timestamp)),
+    };
+    
+    let tx = Transaction::new(
+        TransactionType::DataContribution,
+        body.device_id.clone(),
+        vec![],
+        vec![output],
+        Some(full_data),
+        1,
+        21000,
+    );
+    
+    let quality_score = tx.data_quality.as_ref()
+        .map(|q| q.overall_score)
+        .unwrap_or(0.5);
+    
+    // Add to blockchain
+    let mut blockchain = data.blockchain.write().await;
+    match blockchain.add_transaction(tx) {
+        Ok(hash) => {
+            info!("External IoT data submitted: {} from {} (reward: {} EDGE)", 
+                &hash[..12.min(hash.len())], body.device_id, reward);
+            
+            HttpResponse::Ok().json(ApiResponse::success(IoTSubmissionResponse {
+                tx_hash: hash,
+                device_id: body.device_id.clone(),
+                reward,
+                quality_score,
+                block_pending: true,
+            }))
+        }
+        Err(e) => HttpResponse::BadRequest().json(ApiResponse::<()>::error(&e)),
+    }
+}
+
+/// Get device registration info and API documentation
+pub async fn get_iot_api_info() -> impl Responder {
+    #[derive(Serialize)]
+    struct IoTApiInfo {
+        version: &'static str,
+        endpoints: Vec<EndpointInfo>,
+        categories: Vec<&'static str>,
+        example_request: serde_json::Value,
+    }
+    
+    #[derive(Serialize)]
+    struct EndpointInfo {
+        method: &'static str,
+        path: &'static str,
+        description: &'static str,
+    }
+    
+    let info = IoTApiInfo {
+        version: "1.0.0",
+        endpoints: vec![
+            EndpointInfo {
+                method: "POST",
+                path: "/api/iot/submit",
+                description: "Submit IoT telemetry data to the blockchain",
+            },
+            EndpointInfo {
+                method: "GET",
+                path: "/api/iot/info",
+                description: "Get API documentation and supported categories",
+            },
+        ],
+        categories: vec!["SmartCity", "Manufacturing", "Agriculture", "Energy", "Healthcare", "Logistics", "EdgeAI", "General"],
+        example_request: serde_json::json!({
+            "device_id": "my_sensor_001",
+            "api_key": "your_api_key_here",
+            "telemetry": {
+                "temperature": 25.5,
+                "humidity": 60,
+                "pressure": 1013.25
+            },
+            "category": "SmartCity",
+            "location": [1.3521, 103.8198]
+        }),
+    };
+    
+    HttpResponse::Ok().json(ApiResponse::success(info))
+}
+
 // ============ Router Configuration ============
 
 pub fn configure_wallet_routes(cfg: &mut web::ServiceConfig) {
@@ -393,5 +584,9 @@ pub fn configure_wallet_routes(cfg: &mut web::ServiceConfig) {
         .route("/api/wallet/prepare-transfer", web::post().to(prepare_transfer))
         .route("/api/wallet/prepare-contribute", web::post().to(prepare_data_contribution))
         .route("/api/wallet/transfer", web::post().to(submit_signed_transfer))
-        .route("/api/wallet/contribute", web::post().to(submit_signed_data_contribution));
+        .route("/api/wallet/contribute", web::post().to(submit_signed_data_contribution))
+        
+        // External IoT device API
+        .route("/api/iot/submit", web::post().to(submit_iot_data))
+        .route("/api/iot/info", web::get().to(get_iot_api_info));
 }

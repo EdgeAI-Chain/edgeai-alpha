@@ -91,7 +91,8 @@ async fn main() -> std::io::Result<()> {
             
             // Collect pending transactions from mempool
             let mut mempool = MempoolManager::with_block_context(current_height);
-            let batch_size = 3 + (current_height % 6) as usize;
+            // Stress test: Generate 20-40 transactions per block for realistic load
+            let batch_size = 20 + (current_height % 21) as usize;
             let pending_txs = mempool.collect_pending(batch_size);
             info!("Generated {} transactions from mempool for block {}", pending_txs.len(), current_height);
             

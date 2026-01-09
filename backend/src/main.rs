@@ -95,8 +95,19 @@ async fn main() -> std::io::Result<()> {
             let pending_txs = mempool.collect_pending(batch_size);
             
             // Add collected transactions to chain
+            let mut added_count = 0;
+            let mut failed_count = 0;
             for tx in pending_txs {
-                let _ = chain.add_transaction(tx);
+                match chain.add_transaction(tx) {
+                    Ok(_) => added_count += 1,
+                    Err(e) => {
+                        failed_count += 1;
+                        log::debug!("Transaction rejected: {}", e);
+                    }
+                }
+            }
+            if added_count > 0 || failed_count > 0 {
+                info!("Mempool: {} transactions added, {} rejected", added_count, failed_count);
             }
             
             // Produce new block

@@ -93,6 +93,7 @@ async fn main() -> std::io::Result<()> {
             let mut mempool = MempoolManager::with_block_context(current_height);
             let batch_size = 3 + (current_height % 6) as usize;
             let pending_txs = mempool.collect_pending(batch_size);
+            info!("Generated {} transactions from mempool for block {}", pending_txs.len(), current_height);
             
             // Add collected transactions to chain
             let mut added_count = 0;
@@ -102,7 +103,7 @@ async fn main() -> std::io::Result<()> {
                     Ok(_) => added_count += 1,
                     Err(e) => {
                         failed_count += 1;
-                        log::debug!("Transaction rejected: {}", e);
+                        log::warn!("Transaction rejected: {}", e);
                     }
                 }
             }

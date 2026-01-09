@@ -121,16 +121,16 @@ export default function Validators() {
 
         <Card className="bg-card/50 border-muted">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Network Hashrate</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Network Entropy</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{(totalBlocks / 1000000).toFixed(2)} EH/s</div>
+            <div className="text-2xl font-bold">{totalStake.toFixed(2)} <span className="text-sm font-normal">bits</span></div>
             <div className="flex items-center gap-2 mt-2 text-xs text-green-500">
               <Activity className="h-3 w-3" />
-              <span>+12.5% from last epoch</span>
+              <span>PoIE consensus metric</span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Based on {totalBlocks.toLocaleString()} blocks mined (current page)
+              Cumulative information entropy from {totalBlocks.toLocaleString()} blocks
             </p>
           </CardContent>
         </Card>

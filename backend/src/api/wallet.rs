@@ -394,6 +394,32 @@ pub struct ExternalIoTDataRequest {
     pub location: Option<[f64; 2]>,
 }
 
+/// Request structure for batch IoT data submission
+/// Allows submitting multiple telemetry records in a single request
+#[derive(Debug, Deserialize)]
+pub struct BatchIoTDataRequest {
+    /// List of IoT data submissions (max 100 per batch)
+    pub transactions: Vec<ExternalIoTDataRequest>,
+}
+
+/// Response for batch IoT data submission
+#[derive(Debug, Serialize)]
+pub struct BatchIoTSubmissionResponse {
+    pub total: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub results: Vec<BatchItemResult>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchItemResult {
+    pub device_id: String,
+    pub success: bool,
+    pub tx_hash: Option<String>,
+    pub reward: Option<u64>,
+    pub error: Option<String>,
+}
+
 /// Response for IoT data submission
 #[derive(Debug, Serialize)]
 pub struct IoTSubmissionResponse {
@@ -519,6 +545,156 @@ pub async fn submit_iot_data(
     }
 }
 
+/// Batch submit IoT telemetry data from multiple devices
+/// 
+/// # Endpoint
+/// POST /api/iot/batch_submit
+/// 
+/// # Request Body
+/// ```json
+/// {
+///   "transactions": [
+///     {"device_id": "sensor_001", "api_key": "key", "telemetry": {...}, "category": "SmartCity"},
+///     {"device_id": "sensor_002", "api_key": "key", "telemetry": {...}, "category": "Manufacturing"}
+///   ]
+/// }
+/// ```
+/// 
+/// # Limits
+/// - Maximum 100 transactions per batch
+pub async fn batch_submit_iot_data(
+    data: web::Data<AppState>,
+    body: web::Json<BatchIoTDataRequest>,
+) -> impl Responder {
+    const MAX_BATCH_SIZE: usize = 100;
+    
+    // Validate batch size
+    if body.transactions.is_empty() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("Empty batch: at least one transaction required"));
+    }
+    
+    if body.transactions.len() > MAX_BATCH_SIZE {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(&format!(
+                "Batch too large: maximum {} transactions allowed", MAX_BATCH_SIZE
+            )));
+    }
+    
+    let valid_categories = ["SmartCity", "Manufacturing", "Agriculture", "Energy", "Healthcare", "Logistics", "EdgeAI", "General"];
+    
+    let mut results = Vec::with_capacity(body.transactions.len());
+    let mut successful = 0;
+    let mut failed = 0;
+    
+    // Process each transaction
+    for item in &body.transactions {
+        // Validate category
+        if !valid_categories.contains(&item.category.as_str()) {
+            results.push(BatchItemResult {
+                device_id: item.device_id.clone(),
+                success: false,
+                tx_hash: None,
+                reward: None,
+                error: Some(format!("Invalid category: {}", item.category)),
+            });
+            failed += 1;
+            continue;
+        }
+        
+        // Validate API key
+        if item.api_key.is_empty() {
+            results.push(BatchItemResult {
+                device_id: item.device_id.clone(),
+                success: false,
+                tx_hash: None,
+                reward: None,
+                error: Some("API key required".to_string()),
+            });
+            failed += 1;
+            continue;
+        }
+        
+        // Build telemetry JSON string
+        let telemetry_str = item.telemetry.to_string();
+        
+        // Build full data payload
+        let (lat, lng) = item.location.map(|l| (l[0], l[1])).unwrap_or((0.0, 0.0));
+        let timestamp = chrono::Utc::now().timestamp();
+        
+        let full_data = format!(
+            r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{},"source":"batch"}}"#,
+            item.device_id, item.category, telemetry_str, lat, lng, timestamp
+        );
+        
+        // Calculate reward
+        let data_size = full_data.len() as u64;
+        let base_reward = 30 + (data_size / 20);
+        let category_bonus: u64 = match item.category.as_str() {
+            "Healthcare" => 20,
+            "Manufacturing" => 15,
+            "Energy" => 15,
+            "Agriculture" => 10,
+            _ => 5,
+        };
+        let reward = base_reward + category_bonus;
+        
+        // Create transaction
+        use crate::blockchain::transaction::{TxOutput, TransactionType};
+        
+        let output = TxOutput {
+            amount: reward,
+            recipient: item.device_id.clone(),
+            data_hash: Some(format!("batch_{:x}", timestamp)),
+        };
+        
+        let tx = Transaction::new(
+            TransactionType::DataContribution,
+            item.device_id.clone(),
+            vec![],
+            vec![output],
+            Some(full_data),
+            1,
+            21000,
+        );
+        
+        // Add to blockchain
+        let mut blockchain = data.blockchain.write().await;
+        match blockchain.add_transaction(tx) {
+            Ok(hash) => {
+                results.push(BatchItemResult {
+                    device_id: item.device_id.clone(),
+                    success: true,
+                    tx_hash: Some(hash),
+                    reward: Some(reward),
+                    error: None,
+                });
+                successful += 1;
+            }
+            Err(e) => {
+                results.push(BatchItemResult {
+                    device_id: item.device_id.clone(),
+                    success: false,
+                    tx_hash: None,
+                    reward: None,
+                    error: Some(e),
+                });
+                failed += 1;
+            }
+        }
+    }
+    
+    info!("Batch IoT submission: {} successful, {} failed out of {} total", 
+        successful, failed, body.transactions.len());
+    
+    HttpResponse::Ok().json(ApiResponse::success(BatchIoTSubmissionResponse {
+        total: body.transactions.len(),
+        successful,
+        failed,
+        results,
+    }))
+}
+
 /// Get device registration info and API documentation
 pub async fn get_iot_api_info() -> impl Responder {
     #[derive(Serialize)]
@@ -537,12 +713,17 @@ pub async fn get_iot_api_info() -> impl Responder {
     }
     
     let info = IoTApiInfo {
-        version: "1.0.0",
+        version: "1.1.0",
         endpoints: vec![
             EndpointInfo {
                 method: "POST",
                 path: "/api/iot/submit",
-                description: "Submit IoT telemetry data to the blockchain",
+                description: "Submit single IoT telemetry data to the blockchain",
+            },
+            EndpointInfo {
+                method: "POST",
+                path: "/api/iot/batch_submit",
+                description: "Submit multiple IoT telemetry data in a single request (max 100 per batch)",
             },
             EndpointInfo {
                 method: "GET",
@@ -552,15 +733,33 @@ pub async fn get_iot_api_info() -> impl Responder {
         ],
         categories: vec!["SmartCity", "Manufacturing", "Agriculture", "Energy", "Healthcare", "Logistics", "EdgeAI", "General"],
         example_request: serde_json::json!({
-            "device_id": "my_sensor_001",
-            "api_key": "your_api_key_here",
-            "telemetry": {
-                "temperature": 25.5,
-                "humidity": 60,
-                "pressure": 1013.25
+            "single_submit": {
+                "device_id": "my_sensor_001",
+                "api_key": "your_api_key_here",
+                "telemetry": {
+                    "temperature": 25.5,
+                    "humidity": 60,
+                    "pressure": 1013.25
+                },
+                "category": "SmartCity",
+                "location": [1.3521, 103.8198]
             },
-            "category": "SmartCity",
-            "location": [1.3521, 103.8198]
+            "batch_submit": {
+                "transactions": [
+                    {
+                        "device_id": "sensor_001",
+                        "api_key": "your_api_key",
+                        "telemetry": {"temperature": 25.5},
+                        "category": "SmartCity"
+                    },
+                    {
+                        "device_id": "sensor_002",
+                        "api_key": "your_api_key",
+                        "telemetry": {"humidity": 60},
+                        "category": "Manufacturing"
+                    }
+                ]
+            }
         }),
     };
     
@@ -588,5 +787,6 @@ pub fn configure_wallet_routes(cfg: &mut web::ServiceConfig) {
         
         // External IoT device API
         .route("/api/iot/submit", web::post().to(submit_iot_data))
+        .route("/api/iot/batch_submit", web::post().to(batch_submit_iot_data))
         .route("/api/iot/info", web::get().to(get_iot_api_info));
 }

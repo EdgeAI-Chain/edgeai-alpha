@@ -196,7 +196,38 @@ export async function fetchValidatorNodes(
     const response = await apiCall<ValidatorListResponse>(endpoint);
     
     if (response.success && response.data.validators) {
-      return response.data;
+      const data = response.data;
+      
+      // 如果后端还没有返回新字段，前端补充计算
+      if (data.stats && data.stats.network_entropy === undefined) {
+        const validators = data.validators;
+        const totalBlocksMined = validators.reduce((acc, v) => acc + v.blocks_mined, 0);
+        const avgReputation = validators.length > 0 
+          ? validators.reduce((acc, v) => acc + v.reputation, 0) / validators.length 
+          : 0;
+        
+        // 计算 Network Entropy (Shannon 信息熵)
+        let networkEntropy = 0;
+        if (totalBlocksMined > 0) {
+          for (const v of validators) {
+            if (v.blocks_mined > 0) {
+              const p = v.blocks_mined / totalBlocksMined;
+              networkEntropy -= p * Math.log2(p);
+            }
+          }
+          // 缩放到合理范围
+          networkEntropy *= Math.log2(data.total || totalBlocksMined);
+        }
+        
+        data.stats = {
+          ...data.stats,
+          network_entropy: networkEntropy,
+          total_blocks_mined: totalBlocksMined * (data.total / validators.length),
+          avg_reputation: avgReputation,
+        };
+      }
+      
+      return data;
     }
     
     throw new Error(response.error || "Failed to fetch validators");

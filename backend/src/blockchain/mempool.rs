@@ -82,10 +82,19 @@ impl MempoolManager {
     fn process_incoming(&mut self) -> Transaction {
         self.seq += 1;
         
-        // For now, all simulated transactions are DataContribution type
-        // This ensures they pass validation without balance checks (PoIE model)
-        // TODO: Add proper balance initialization for Transfer/Purchase transactions
-        self.handle_data_upload()
+        // Generate different transaction types for realistic simulation
+        // Device accounts now have 100 EDGE initial balance for Transfer/Purchase
+        let tx_class = self.hasher.next_f64();
+        if tx_class < 0.60 {
+            // 60% - IoT data contribution (PoIE core)
+            self.handle_data_upload()
+        } else if tx_class < 0.85 {
+            // 25% - Token transfers between devices
+            self.handle_transfer()
+        } else {
+            // 15% - Data marketplace purchases
+            self.handle_purchase()
+        }
     }
 
     /// Handle IoT data upload transaction

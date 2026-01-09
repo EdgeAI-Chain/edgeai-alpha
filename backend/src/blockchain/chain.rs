@@ -92,6 +92,29 @@ impl Blockchain {
             staked_amount: 0,
         });
         
+        // Initialize simulated IoT device accounts with 100 EDGE each
+        // This enables realistic Transfer and DataPurchase transactions
+        let simulated_devices = [
+            "edge_node_001", "edge_node_002", "edge_node_003",
+            "edge_node_004", "edge_node_005", "edge_node_006",
+            "edge_node_007", "edge_node_008", "edge_node_009",
+            "edge_node_010", "factory_hub_a", "factory_hub_b",
+            "city_gateway", "agri_node_1", "med_device_1",
+            "power_grid_01", "transit_hub", "warehouse_sys",
+        ];
+        
+        for device in simulated_devices.iter() {
+            accounts.insert(device.to_string(), Account {
+                address: device.to_string(),
+                balance: 100,  // 100 EDGE initial balance
+                nonce: 0,
+                data_contributions: 0,
+                reputation_score: 50.0,
+                staked_amount: 0,
+            });
+        }
+        info!("Initialized {} simulated device accounts with 100 EDGE each", simulated_devices.len());
+        
         let state = ChainState {
             accounts,
             data_registry: HashMap::new(),
@@ -130,6 +153,35 @@ impl Blockchain {
                     Ok(mut chain) => {
                         // Re-initialize pending transactions as empty since they are skipped in serialization
                         chain.pending_transactions = Vec::new();
+                        
+                        // Ensure simulated device accounts exist with minimum balance
+                        let simulated_devices = [
+                            "edge_node_001", "edge_node_002", "edge_node_003",
+                            "edge_node_004", "edge_node_005", "edge_node_006",
+                            "edge_node_007", "edge_node_008", "edge_node_009",
+                            "edge_node_010", "factory_hub_a", "factory_hub_b",
+                            "city_gateway", "agri_node_1", "med_device_1",
+                            "power_grid_01", "transit_hub", "warehouse_sys",
+                        ];
+                        
+                        let mut initialized_count = 0;
+                        for device in simulated_devices.iter() {
+                            if !chain.state.accounts.contains_key(*device) {
+                                chain.state.accounts.insert(device.to_string(), Account {
+                                    address: device.to_string(),
+                                    balance: 100,  // 100 EDGE initial balance
+                                    nonce: 0,
+                                    data_contributions: 0,
+                                    reputation_score: 50.0,
+                                    staked_amount: 0,
+                                });
+                                initialized_count += 1;
+                            }
+                        }
+                        if initialized_count > 0 {
+                            info!("Initialized {} missing device accounts with 100 EDGE", initialized_count);
+                        }
+                        
                         Some(chain)
                     },
                     Err(e) => {

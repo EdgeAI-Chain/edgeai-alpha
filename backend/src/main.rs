@@ -18,7 +18,7 @@ use env_logger::Builder;
 use std::fs;
 use std::path::Path;
 
-use blockchain::Blockchain;
+use blockchain::{Blockchain, TransactionSimulator};
 use consensus::PoIEConsensus;
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
@@ -80,7 +80,7 @@ async fn main() -> std::io::Result<()> {
     let mining_validator = node_id.clone();
     
     tokio::spawn(async move {
-        info!("Background mining task started");
+        info!("Background mining task started with transaction simulation");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         
         loop {
@@ -88,11 +88,26 @@ async fn main() -> std::io::Result<()> {
             
             let mut chain = mining_blockchain.write().await;
             
-            // Force mine every 10s to keep chain alive and block height growing
-            // This ensures the blockchain feels "alive" even without user transactions
+            // Get current block index for deterministic simulation
+            let current_index = chain.chain.len() as u64;
+            
+            // Generate simulated IoT transactions (3-8 per block)
+            let mut simulator = TransactionSimulator::from_block_index(current_index);
+            let tx_count = 3 + (current_index % 6) as usize; // 3-8 transactions
+            let simulated_txs = simulator.generate_transactions(tx_count);
+            
+            // Add simulated transactions to pending pool
+            for tx in simulated_txs {
+                if let Err(e) = chain.add_transaction(tx) {
+                    log::debug!("Simulated tx rejected: {}", e);
+                }
+            }
+            
+            // Mine block with all pending transactions
             match chain.mine_block(mining_validator.clone()) {
                 Ok(block) => {
-                    info!("Auto-mined block #{} with {} txs", block.index, block.transactions.len());
+                    info!("Auto-mined block #{} with {} txs (including {} simulated)", 
+                          block.index, block.transactions.len(), tx_count);
                 },
                 Err(e) => {
                     log::warn!("Mining failed: {}", e);

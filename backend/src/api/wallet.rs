@@ -461,7 +461,7 @@ pub async fn submit_iot_data(
     let timestamp = chrono::Utc::now().timestamp();
     
     let full_data = format!(
-        r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{},"source":"external"}}",
+        r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{},"source":"external"}}"#,
         body.device_id, body.category, telemetry_str, lat, lng, timestamp
     );
     

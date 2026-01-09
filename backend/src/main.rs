@@ -18,7 +18,7 @@ use env_logger::Builder;
 use std::fs;
 use std::path::Path;
 
-use blockchain::{Blockchain, TransactionSimulator};
+use blockchain::{Blockchain, MempoolManager};
 use consensus::PoIEConsensus;
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
@@ -80,37 +80,33 @@ async fn main() -> std::io::Result<()> {
     let mining_validator = node_id.clone();
     
     tokio::spawn(async move {
-        info!("Background mining task started with transaction simulation");
+        info!("Block producer started");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         
         loop {
             interval.tick().await;
             
             let mut chain = mining_blockchain.write().await;
+            let current_height = chain.chain.len() as u64;
             
-            // Get current block index for deterministic simulation
-            let current_index = chain.chain.len() as u64;
+            // Collect pending transactions from mempool
+            let mut mempool = MempoolManager::with_block_context(current_height);
+            let batch_size = 3 + (current_height % 6) as usize;
+            let pending_txs = mempool.collect_pending(batch_size);
             
-            // Generate simulated IoT transactions (3-8 per block)
-            let mut simulator = TransactionSimulator::from_block_index(current_index);
-            let tx_count = 3 + (current_index % 6) as usize; // 3-8 transactions
-            let simulated_txs = simulator.generate_transactions(tx_count);
-            
-            // Add simulated transactions to pending pool
-            for tx in simulated_txs {
-                if let Err(e) = chain.add_transaction(tx) {
-                    log::debug!("Simulated tx rejected: {}", e);
-                }
+            // Add collected transactions to chain
+            for tx in pending_txs {
+                let _ = chain.add_transaction(tx);
             }
             
-            // Mine block with all pending transactions
+            // Produce new block
             match chain.mine_block(mining_validator.clone()) {
                 Ok(block) => {
-                    info!("Auto-mined block #{} with {} txs (including {} simulated)", 
-                          block.index, block.transactions.len(), tx_count);
+                    info!("Produced block #{} with {} transactions", 
+                          block.index, block.transactions.len());
                 },
                 Err(e) => {
-                    log::warn!("Mining failed: {}", e);
+                    log::warn!("Block production failed: {}", e);
                 }
             }
         }

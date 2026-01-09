@@ -380,7 +380,13 @@ impl Blockchain {
     /// Apply block transactions to state
     fn apply_block(&mut self, block: &Block) -> Result<(), String> {
         for tx in &block.transactions {
-            self.apply_transaction(tx)?;
+            // Skip failed transactions instead of failing the entire block
+            // This is important for DataPurchase transactions that may reference
+            // data not yet in the registry
+            if let Err(e) = self.apply_transaction(tx) {
+                log::warn!("Transaction {} failed to apply: {} (skipping)", &tx.hash[..8], e);
+                continue;
+            }
         }
         Ok(())
     }

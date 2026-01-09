@@ -239,8 +239,9 @@ impl Blockchain {
         }
         
         let tx_hash = tx.hash.clone();
+        let tx_type = tx.tx_type.clone();
         self.pending_transactions.push(tx);
-        info!("Transaction {} added to pending pool (type: {:?})", &tx_hash[..8], tx.tx_type);
+        info!("Transaction {} added to pending pool (type: {:?})", &tx_hash[..8], tx_type);
         
         Ok(tx_hash)
     }

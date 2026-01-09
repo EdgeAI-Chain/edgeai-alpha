@@ -486,17 +486,61 @@ impl Blockchain {
         txs
     }
     
-    /// Get blockchain stats
+    /// Get blockchain stats with PoIE network metrics
     pub fn get_stats(&self) -> ChainStats {
+        let height = self.chain.len() as u64;
+        let total_transactions: u64 = self.chain.iter().map(|b| b.transactions.len() as u64).sum();
+        
+        // Calculate network entropy (sum of all block entropies)
+        let network_entropy: f64 = self.chain.iter()
+            .map(|b| b.header.data_entropy)
+            .sum();
+        
+        // Calculate average transactions per block
+        let avg_tx_per_block = if height > 0 {
+            total_transactions as f64 / height as f64
+        } else {
+            0.0
+        };
+        
+        // Calculate data throughput (estimated bytes per second)
+        // Each transaction averages ~256 bytes, block time is 10s
+        let data_throughput = if height > 0 {
+            (total_transactions as f64 * 256.0) / (height as f64 * 10.0)
+        } else {
+            0.0
+        };
+        
+        // Calculate TPS (transactions per second)
+        let tps = if height > 0 {
+            total_transactions as f64 / (height as f64 * 10.0)
+        } else {
+            0.0
+        };
+        
+        // Calculate validator power index
+        // Based on active accounts, data entries, and network entropy
+        let validator_power = {
+            let active = self.state.accounts.len() as f64;
+            let data = self.state.data_registry.len() as f64;
+            let entropy_factor = network_entropy / (height.max(1) as f64);
+            (active * 0.3 + data * 0.3 + entropy_factor * 100.0 * 0.4).max(0.0)
+        };
+        
         ChainStats {
-            height: self.chain.len() as u64,
-            total_transactions: self.chain.iter().map(|b| b.transactions.len() as u64).sum(),
+            height,
+            total_transactions,
             total_supply: self.state.total_supply,
             total_staked: self.state.total_staked,
             active_accounts: self.state.accounts.len() as u64,
             data_entries: self.state.data_registry.len() as u64,
             difficulty: self.difficulty,
             last_block_time: self.last_block_time,
+            network_entropy,
+            avg_tx_per_block,
+            data_throughput,
+            tps,
+            validator_power,
         }
     }
 }
@@ -511,4 +555,10 @@ pub struct ChainStats {
     pub data_entries: u64,
     pub difficulty: u64,
     pub last_block_time: i64,
+    // PoIE Network Metrics
+    pub network_entropy: f64,
+    pub avg_tx_per_block: f64,
+    pub data_throughput: f64,
+    pub tps: f64,
+    pub validator_power: f64,
 }

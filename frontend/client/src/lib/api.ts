@@ -276,6 +276,12 @@ export interface ChainStats {
   data_entries: number;
   difficulty: number;
   last_block_time: number;
+  // PoIE Network Metrics
+  network_entropy: number;
+  avg_tx_per_block: number;
+  data_throughput: number;
+  tps: number;
+  validator_power: number;
 }
 
 /**

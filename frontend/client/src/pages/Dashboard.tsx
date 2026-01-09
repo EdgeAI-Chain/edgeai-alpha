@@ -23,7 +23,12 @@ export default function Dashboard() {
     accountCount: 0,
     difficulty: 0,
     avgBlockTime: 0,
-    avgTxPerBlock: 0
+    avgTxPerBlock: 0,
+    // PoIE Network Metrics from backend
+    networkEntropy: 0,
+    dataThroughput: 0,
+    tps: 0,
+    validatorPower: 0
   });
   const [latestBlocks, setLatestBlocks] = useState<Block[]>([]);
   const [recentActivity, setRecentActivity] = useState<Transaction[]>([]);
@@ -51,6 +56,11 @@ export default function Dashboard() {
         txCount: chainStats.total_transactions,
         accountCount: chainStats.active_accounts,
         difficulty: chainStats.difficulty,
+        avgTxPerBlock: chainStats.avg_tx_per_block || 0,
+        networkEntropy: chainStats.network_entropy || 0,
+        dataThroughput: chainStats.data_throughput || 0,
+        tps: chainStats.tps || 0,
+        validatorPower: chainStats.validator_power || 0,
       }));
     } catch (error) {
       console.error("Failed to fetch chain stats:", error);
@@ -373,32 +383,51 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card border-muted col-span-1 md:col-span-2 lg:col-span-3 xl:col-span-4">
+        {/* Network Entropy - PoIE Core Metric */}
+        <Card className="bg-card border-muted col-span-1 md:col-span-1 lg:col-span-2 xl:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Network Hashrate (Estimated)</CardTitle>
-            <Cpu className="h-4 w-4 text-purple-500" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Network Entropy</CardTitle>
+            <Database className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold mb-2">{currentHashrate?.toFixed(2) || '0.00'} <span className="text-xs font-normal text-muted-foreground">EH/s</span></div>
-            <div className="h-[60px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="colorHashrate" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <Area type="monotone" dataKey="hashrate" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorHashrate)" />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '4px', fontSize: '12px' }}
-                    itemStyle={{ color: '#8b5cf6' }}
-                    labelStyle={{ display: 'none' }}
-                    formatter={(value: number) => [`${value?.toFixed(2)} EH/s`, 'Hashrate']}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            <div className="text-2xl font-bold mb-1">{stats.networkEntropy.toFixed(2)}</div>
+            <p className="text-xs text-muted-foreground">Total data entropy (PoIE)</p>
+          </CardContent>
+        </Card>
+
+        {/* TPS - Transactions Per Second */}
+        <Card className="bg-card border-muted col-span-1 md:col-span-1 lg:col-span-2 xl:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">TPS</CardTitle>
+            <Zap className="h-4 w-4 text-yellow-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold mb-1">{stats.tps.toFixed(2)}</div>
+            <p className="text-xs text-muted-foreground">Transactions per second</p>
+          </CardContent>
+        </Card>
+
+        {/* Data Throughput */}
+        <Card className="bg-card border-muted col-span-1 md:col-span-1 lg:col-span-2 xl:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Data Throughput</CardTitle>
+            <Activity className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold mb-1">{(stats.dataThroughput / 1024).toFixed(2)} <span className="text-xs font-normal text-muted-foreground">KB/s</span></div>
+            <p className="text-xs text-muted-foreground">Network data flow</p>
+          </CardContent>
+        </Card>
+
+        {/* Validator Power */}
+        <Card className="bg-card border-muted col-span-1 md:col-span-1 lg:col-span-2 xl:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Validator Power</CardTitle>
+            <Cpu className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold mb-1">{stats.validatorPower.toFixed(1)}</div>
+            <p className="text-xs text-muted-foreground">Network processing index</p>
           </CardContent>
         </Card>
       </div>

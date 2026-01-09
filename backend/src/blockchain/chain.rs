@@ -257,6 +257,7 @@ impl Blockchain {
     pub fn add_transaction(&mut self, tx: Transaction) -> Result<String, String> {
         // Validate transaction hash
         if !tx.verify() {
+            log::warn!("Transaction {} failed verification (type: {:?})", &tx.hash[..8], tx.tx_type);
             return Err("Invalid transaction hash".to_string());
         }
         
@@ -265,8 +266,10 @@ impl Blockchain {
             // Transfer requires balance check
             TransactionType::Transfer => {
                 let sender_balance = self.get_balance(&tx.sender);
-                if sender_balance < tx.total_output() {
-                    return Err("Insufficient balance".to_string());
+                let required = tx.total_output();
+                if sender_balance < required {
+                    log::debug!("Transfer rejected: {} has {} EDGE, needs {}", &tx.sender, sender_balance, required);
+                    return Err(format!("Insufficient balance: has {}, needs {}", sender_balance, required));
                 }
             },
             // DataContribution: IoT devices contribute data and receive rewards

@@ -138,7 +138,8 @@ impl MempoolManager {
 
         let src = REGISTERED_DEVICES[src_idx].to_string();
         let dst = REGISTERED_DEVICES[dst_idx].to_string();
-        let amt = self.hasher.next_range(100, 10000);
+        // Keep transfer amounts small to stay within device balance (100 EDGE)
+        let amt = self.hasher.next_range(1, 20);
 
         let output = TxOutput {
             amount: amt,
@@ -169,7 +170,8 @@ impl MempoolManager {
 
         let buyer = REGISTERED_DEVICES[buyer_idx].to_string();
         let seller = REGISTERED_DEVICES[seller_idx].to_string();
-        let price = self.hasher.next_range(50, 500);
+        // Keep purchase prices within device balance (100 EDGE)
+        let price = self.hasher.next_range(5, 30);
         let asset_id = format!("0x{:08x}", self.hasher.state);
 
         let output = TxOutput {

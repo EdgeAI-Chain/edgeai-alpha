@@ -8,17 +8,6 @@
 //! This module is designed to support real IoT data uploads in the future.
 //! External devices can submit transactions via the `/api/transactions/submit` endpoint.
 //! The mempool will validate and queue these transactions for block inclusion.
-//!
-//! ## Phase 1 Scaling: 1000 Devices
-//! 
-//! This version supports 1000+ simulated IoT devices across 7 industries:
-//! - Smart City: 200 devices
-//! - Manufacturing: 150 devices
-//! - Agriculture: 150 devices
-//! - Energy: 150 devices
-//! - Healthcare: 100 devices
-//! - Logistics: 150 devices
-//! - Edge AI: 100 devices
 
 use chrono::Utc;
 use crate::blockchain::transaction::{Transaction, TransactionType, TxOutput};
@@ -52,106 +41,97 @@ impl TxHasher {
 }
 
 // ============================================================================
-// DEVICE REGISTRY - Phase 1: 1000 Devices
+// DEVICE REGISTRY - Expanded for Stress Testing
 // ============================================================================
 
-/// Generate device IDs for a category
-fn generate_device_ids(prefix: &str, count: usize) -> Vec<String> {
-    (1..=count).map(|i| format!("{}_{:03}", prefix, i)).collect()
-}
+/// Smart City Infrastructure Devices
+const SMART_CITY_DEVICES: &[&str] = &[
+    "traffic_cam_001", "traffic_cam_002", "traffic_cam_003", "traffic_cam_004", "traffic_cam_005",
+    "traffic_cam_006", "traffic_cam_007", "traffic_cam_008", "traffic_cam_009", "traffic_cam_010",
+    "air_quality_001", "air_quality_002", "air_quality_003", "air_quality_004", "air_quality_005",
+    "smart_light_001", "smart_light_002", "smart_light_003", "smart_light_004", "smart_light_005",
+    "smart_light_006", "smart_light_007", "smart_light_008", "smart_light_009", "smart_light_010",
+    "parking_sensor_001", "parking_sensor_002", "parking_sensor_003", "parking_sensor_004",
+    "noise_monitor_001", "noise_monitor_002", "noise_monitor_003", "noise_monitor_004",
+    "weather_station_001", "weather_station_002", "weather_station_003",
+    "flood_sensor_001", "flood_sensor_002", "flood_sensor_003",
+    "ev_charger_001", "ev_charger_002", "ev_charger_003", "ev_charger_004", "ev_charger_005",
+];
 
-/// Smart City Infrastructure Devices (200 devices)
-fn smart_city_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("traffic_cam", 40));
-    devices.extend(generate_device_ids("air_quality", 25));
-    devices.extend(generate_device_ids("smart_light", 50));
-    devices.extend(generate_device_ids("parking_sensor", 30));
-    devices.extend(generate_device_ids("noise_monitor", 15));
-    devices.extend(generate_device_ids("weather_station", 10));
-    devices.extend(generate_device_ids("flood_sensor", 10));
-    devices.extend(generate_device_ids("ev_charger", 20));
-    devices
-}
+/// Industrial Manufacturing Devices
+const INDUSTRIAL_DEVICES: &[&str] = &[
+    "robot_arm_001", "robot_arm_002", "robot_arm_003", "robot_arm_004", "robot_arm_005",
+    "robot_arm_006", "robot_arm_007", "robot_arm_008", "robot_arm_009", "robot_arm_010",
+    "cnc_machine_001", "cnc_machine_002", "cnc_machine_003", "cnc_machine_004", "cnc_machine_005",
+    "vibration_001", "vibration_002", "vibration_003", "vibration_004", "vibration_005",
+    "vibration_006", "vibration_007", "vibration_008", "vibration_009", "vibration_010",
+    "pressure_001", "pressure_002", "pressure_003", "pressure_004", "pressure_005",
+    "temp_industrial_001", "temp_industrial_002", "temp_industrial_003", "temp_industrial_004",
+    "conveyor_001", "conveyor_002", "conveyor_003", "conveyor_004", "conveyor_005",
+    "quality_cam_001", "quality_cam_002", "quality_cam_003", "quality_cam_004",
+    "plc_gateway_001", "plc_gateway_002", "plc_gateway_003",
+];
 
-/// Industrial Manufacturing Devices (150 devices)
-fn industrial_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("robot_arm", 30));
-    devices.extend(generate_device_ids("cnc_machine", 25));
-    devices.extend(generate_device_ids("vibration", 25));
-    devices.extend(generate_device_ids("pressure", 20));
-    devices.extend(generate_device_ids("temp_industrial", 15));
-    devices.extend(generate_device_ids("conveyor", 15));
-    devices.extend(generate_device_ids("quality_cam", 10));
-    devices.extend(generate_device_ids("plc_gateway", 10));
-    devices
-}
+/// Smart Agriculture Devices
+const AGRICULTURE_DEVICES: &[&str] = &[
+    "soil_probe_001", "soil_probe_002", "soil_probe_003", "soil_probe_004", "soil_probe_005",
+    "soil_probe_006", "soil_probe_007", "soil_probe_008", "soil_probe_009", "soil_probe_010",
+    "irrigation_001", "irrigation_002", "irrigation_003", "irrigation_004", "irrigation_005",
+    "weather_agri_001", "weather_agri_002", "weather_agri_003",
+    "drone_001", "drone_002", "drone_003", "drone_004", "drone_005",
+    "livestock_001", "livestock_002", "livestock_003", "livestock_004",
+    "greenhouse_001", "greenhouse_002", "greenhouse_003", "greenhouse_004",
+    "crop_monitor_001", "crop_monitor_002", "crop_monitor_003",
+    "pest_detector_001", "pest_detector_002", "pest_detector_003",
+];
 
-/// Smart Agriculture Devices (150 devices)
-fn agriculture_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("soil_probe", 40));
-    devices.extend(generate_device_ids("irrigation", 30));
-    devices.extend(generate_device_ids("weather_agri", 15));
-    devices.extend(generate_device_ids("drone", 15));
-    devices.extend(generate_device_ids("livestock", 20));
-    devices.extend(generate_device_ids("greenhouse", 15));
-    devices.extend(generate_device_ids("crop_monitor", 10));
-    devices.extend(generate_device_ids("pest_detector", 5));
-    devices
-}
+/// Energy Grid Devices
+const ENERGY_DEVICES: &[&str] = &[
+    "smart_meter_001", "smart_meter_002", "smart_meter_003", "smart_meter_004", "smart_meter_005",
+    "smart_meter_006", "smart_meter_007", "smart_meter_008", "smart_meter_009", "smart_meter_010",
+    "smart_meter_011", "smart_meter_012", "smart_meter_013", "smart_meter_014", "smart_meter_015",
+    "solar_array_001", "solar_array_002", "solar_array_003", "solar_array_004", "solar_array_005",
+    "wind_turbine_001", "wind_turbine_002", "wind_turbine_003",
+    "battery_storage_001", "battery_storage_002", "battery_storage_003",
+    "grid_monitor_001", "grid_monitor_002", "grid_monitor_003", "grid_monitor_004",
+    "transformer_001", "transformer_002", "transformer_003",
+    "power_quality_001", "power_quality_002", "power_quality_003",
+];
 
-/// Energy Grid Devices (150 devices)
-fn energy_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("smart_meter", 60));
-    devices.extend(generate_device_ids("solar_array", 30));
-    devices.extend(generate_device_ids("wind_turbine", 15));
-    devices.extend(generate_device_ids("battery_storage", 15));
-    devices.extend(generate_device_ids("grid_monitor", 15));
-    devices.extend(generate_device_ids("transformer", 10));
-    devices.extend(generate_device_ids("power_quality", 5));
-    devices
-}
+/// Healthcare & Medical Devices
+const HEALTHCARE_DEVICES: &[&str] = &[
+    "patient_monitor_001", "patient_monitor_002", "patient_monitor_003", "patient_monitor_004",
+    "patient_monitor_005", "patient_monitor_006", "patient_monitor_007", "patient_monitor_008",
+    "infusion_pump_001", "infusion_pump_002", "infusion_pump_003", "infusion_pump_004",
+    "ventilator_001", "ventilator_002", "ventilator_003",
+    "ecg_monitor_001", "ecg_monitor_002", "ecg_monitor_003",
+    "blood_analyzer_001", "blood_analyzer_002",
+    "imaging_device_001", "imaging_device_002",
+    "pharmacy_dispenser_001", "pharmacy_dispenser_002",
+    "cold_storage_001", "cold_storage_002", "cold_storage_003",
+];
 
-/// Healthcare & Medical Devices (100 devices)
-fn healthcare_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("patient_monitor", 30));
-    devices.extend(generate_device_ids("infusion_pump", 20));
-    devices.extend(generate_device_ids("ventilator", 15));
-    devices.extend(generate_device_ids("ecg_monitor", 10));
-    devices.extend(generate_device_ids("blood_analyzer", 10));
-    devices.extend(generate_device_ids("imaging_device", 5));
-    devices.extend(generate_device_ids("pharmacy_dispenser", 5));
-    devices.extend(generate_device_ids("cold_storage", 5));
-    devices
-}
+/// Logistics & Supply Chain Devices
+const LOGISTICS_DEVICES: &[&str] = &[
+    "gps_tracker_001", "gps_tracker_002", "gps_tracker_003", "gps_tracker_004", "gps_tracker_005",
+    "gps_tracker_006", "gps_tracker_007", "gps_tracker_008", "gps_tracker_009", "gps_tracker_010",
+    "cold_chain_001", "cold_chain_002", "cold_chain_003", "cold_chain_004", "cold_chain_005",
+    "warehouse_001", "warehouse_002", "warehouse_003", "warehouse_004",
+    "rfid_reader_001", "rfid_reader_002", "rfid_reader_003", "rfid_reader_004",
+    "dock_sensor_001", "dock_sensor_002", "dock_sensor_003",
+    "forklift_001", "forklift_002", "forklift_003",
+    "inventory_001", "inventory_002", "inventory_003",
+];
 
-/// Logistics & Supply Chain Devices (150 devices)
-fn logistics_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("gps_tracker", 50));
-    devices.extend(generate_device_ids("cold_chain", 25));
-    devices.extend(generate_device_ids("warehouse", 25));
-    devices.extend(generate_device_ids("rfid_reader", 20));
-    devices.extend(generate_device_ids("dock_sensor", 15));
-    devices.extend(generate_device_ids("forklift", 10));
-    devices.extend(generate_device_ids("inventory", 5));
-    devices
-}
-
-/// Edge AI Compute Nodes (100 devices)
-fn ai_compute_nodes() -> Vec<String> {
-    let mut devices = Vec::new();
-    devices.extend(generate_device_ids("edge_gpu", 40));
-    devices.extend(generate_device_ids("inference", 30));
-    devices.extend(generate_device_ids("training_node", 15));
-    devices.extend(generate_device_ids("model_server", 10));
-    devices.extend(generate_device_ids("data_lake", 5));
-    devices
-}
+/// Edge AI Compute Nodes
+const AI_COMPUTE_NODES: &[&str] = &[
+    "edge_gpu_001", "edge_gpu_002", "edge_gpu_003", "edge_gpu_004", "edge_gpu_005",
+    "edge_gpu_006", "edge_gpu_007", "edge_gpu_008", "edge_gpu_009", "edge_gpu_010",
+    "inference_001", "inference_002", "inference_003", "inference_004", "inference_005",
+    "training_node_001", "training_node_002", "training_node_003",
+    "model_server_001", "model_server_002", "model_server_003",
+    "data_lake_001", "data_lake_002",
+];
 
 /// Geographic regions with realistic distribution
 const REGIONS: &[(&str, f64, f64)] = &[
@@ -161,28 +141,16 @@ const REGIONS: &[(&str, f64, f64)] = &[
     ("APAC-Seoul", 37.5665, 126.9780),
     ("APAC-Mumbai", 19.0760, 72.8777),
     ("APAC-Sydney", -33.8688, 151.2093),
-    ("APAC-HongKong", 22.3193, 114.1694),
-    ("APAC-Jakarta", -6.2088, 106.8456),
-    ("APAC-Bangkok", 13.7563, 100.5018),
     ("NA-NewYork", 40.7128, -74.0060),
     ("NA-SanFrancisco", 37.7749, -122.4194),
     ("NA-Toronto", 43.6532, -79.3832),
     ("NA-Chicago", 41.8781, -87.6298),
-    ("NA-LosAngeles", 34.0522, -118.2437),
-    ("NA-Seattle", 47.6062, -122.3321),
-    ("NA-Dallas", 32.7767, -96.7970),
     ("EU-London", 51.5074, -0.1278),
     ("EU-Frankfurt", 50.1109, 8.6821),
     ("EU-Amsterdam", 52.3676, 4.9041),
     ("EU-Paris", 48.8566, 2.3522),
-    ("EU-Dublin", 53.3498, -6.2603),
-    ("EU-Stockholm", 59.3293, 18.0686),
     ("ME-Dubai", 25.2048, 55.2708),
-    ("ME-TelAviv", 32.0853, 34.7818),
     ("SA-SaoPaulo", -23.5505, -46.6333),
-    ("SA-BuenosAires", -34.6037, -58.3816),
-    ("AF-Johannesburg", -26.2041, 28.0473),
-    ("AF-Cairo", 30.0444, 31.2357),
 ];
 
 /// Industry sectors for data categorization
@@ -199,7 +167,7 @@ const INDUSTRY_SECTORS: &[&str] = &[
 pub struct MempoolManager {
     hasher: TxHasher,
     seq: u64,
-    all_devices: Vec<String>,
+    all_devices: Vec<&'static str>,
 }
 
 impl MempoolManager {
@@ -207,28 +175,21 @@ impl MempoolManager {
     pub fn with_block_context(block_idx: u64) -> Self {
         let seed = block_idx.wrapping_mul(1000003).wrapping_add(Utc::now().timestamp() as u64);
         
-        // Combine all device registries - Total: 1000 devices
-        let mut all_devices: Vec<String> = Vec::new();
-        all_devices.extend(smart_city_devices());      // 200
-        all_devices.extend(industrial_devices());      // 150
-        all_devices.extend(agriculture_devices());     // 150
-        all_devices.extend(energy_devices());          // 150
-        all_devices.extend(healthcare_devices());      // 100
-        all_devices.extend(logistics_devices());       // 150
-        all_devices.extend(ai_compute_nodes());        // 100
-        
-        log::info!("MempoolManager initialized with {} devices", all_devices.len());
+        // Combine all device registries
+        let mut all_devices: Vec<&'static str> = Vec::new();
+        all_devices.extend_from_slice(SMART_CITY_DEVICES);
+        all_devices.extend_from_slice(INDUSTRIAL_DEVICES);
+        all_devices.extend_from_slice(AGRICULTURE_DEVICES);
+        all_devices.extend_from_slice(ENERGY_DEVICES);
+        all_devices.extend_from_slice(HEALTHCARE_DEVICES);
+        all_devices.extend_from_slice(LOGISTICS_DEVICES);
+        all_devices.extend_from_slice(AI_COMPUTE_NODES);
         
         MempoolManager {
             hasher: TxHasher::new(seed),
             seq: 0,
             all_devices,
         }
-    }
-
-    /// Get total device count
-    pub fn device_count(&self) -> usize {
-        self.all_devices.len()
     }
 
     /// Collect pending transactions from network peers
@@ -260,7 +221,7 @@ impl MempoolManager {
 
     /// Get a random device from the registry
     fn random_device(&mut self) -> String {
-        self.all_devices[self.hasher.next_usize(self.all_devices.len())].clone()
+        self.all_devices[self.hasher.next_usize(self.all_devices.len())].to_string()
     }
 
     /// Get a random region
@@ -435,8 +396,7 @@ impl MempoolManager {
         let requester = self.random_device();
         
         // Select an AI compute node as the inference provider
-        let ai_nodes = ai_compute_nodes();
-        let compute_node = ai_nodes[self.hasher.next_usize(ai_nodes.len())].clone();
+        let compute_node = AI_COMPUTE_NODES[self.hasher.next_usize(AI_COMPUTE_NODES.len())].to_string();
         
         // Model types available
         let models = [
@@ -593,68 +553,72 @@ impl MempoolManager {
     fn telemetry_smart_light(&mut self) -> String {
         let brightness = self.hasher.next_usize(100);
         let power_w = self.hasher.next_range_f64(10.0, 150.0);
-        let status = ["on", "off", "dimmed", "auto"][self.hasher.next_usize(4)];
-        format!(r#"{{"brightness_pct":{},"power_watts":{:.1},"status":"{}","runtime_hours":{}}}"#,
-            brightness, power_w, status, self.hasher.next_range(0, 10000))
+        let ambient_lux = self.hasher.next_usize(10000);
+        let motion = self.hasher.next_f64() > 0.7;
+        format!(r#"{{"brightness_pct":{},"power_watts":{:.1},"ambient_lux":{},"motion_detected":{}}}"#,
+            brightness, power_w, ambient_lux, motion)
     }
 
     fn telemetry_parking(&mut self) -> String {
-        let occupied = self.hasher.next_f64() > 0.3;
-        let duration_min = if occupied { self.hasher.next_range(1, 480) } else { 0 };
-        format!(r#"{{"occupied":{},"duration_minutes":{},"vehicle_type":"{}"}}"#,
-            occupied, duration_min, ["car", "motorcycle", "truck"][self.hasher.next_usize(3)])
+        let occupied = self.hasher.next_f64() > 0.4;
+        let duration_min = if occupied { self.hasher.next_usize(480) } else { 0 };
+        format!(r#"{{"occupied":{},"duration_minutes":{},"zone":"{}"}}"#,
+            occupied, duration_min, ["A", "B", "C", "D"][self.hasher.next_usize(4)])
     }
 
     fn telemetry_noise(&mut self) -> String {
         let db = self.hasher.next_range_f64(30.0, 100.0);
         let peak_db = db + self.hasher.next_range_f64(0.0, 20.0);
-        format!(r#"{{"avg_db":{:.1},"peak_db":{:.1},"source":"{}"}}"#,
-            db, peak_db, ["traffic", "construction", "event", "ambient"][self.hasher.next_usize(4)])
+        format!(r#"{{"avg_db":{:.1},"peak_db":{:.1},"duration_sec":{}}}"#, db, peak_db, 60)
     }
 
     fn telemetry_ev_charger(&mut self) -> String {
-        let charging = self.hasher.next_f64() > 0.4;
-        let power_kw = if charging { self.hasher.next_range_f64(3.0, 150.0) } else { 0.0 };
+        let charging = self.hasher.next_f64() > 0.3;
+        let power_kw = if charging { self.hasher.next_range_f64(7.0, 150.0) } else { 0.0 };
         let soc = self.hasher.next_usize(100);
-        format!(r#"{{"charging":{},"power_kw":{:.1},"soc_pct":{},"session_kwh":{:.1}}}"#,
-            charging, power_kw, soc, self.hasher.next_range_f64(0.0, 80.0))
+        format!(r#"{{"charging":{},"power_kw":{:.1},"vehicle_soc_pct":{},"session_kwh":{:.2}}}"#,
+            charging, power_kw, soc, self.hasher.next_range_f64(0.0, 50.0))
     }
 
     // Industrial Telemetry
     fn telemetry_robot_arm(&mut self) -> String {
-        let cycles = self.hasher.next_range(0, 10000);
-        let temp = self.hasher.next_range_f64(20.0, 80.0);
-        let status = ["running", "idle", "maintenance", "error"][self.hasher.next_usize(4)];
-        format!(r#"{{"cycles_today":{},"motor_temp_c":{:.1},"status":"{}","precision_mm":{:.2}}}"#,
-            cycles, temp, status, self.hasher.next_range_f64(0.01, 0.5))
+        let cycle_time = self.hasher.next_range_f64(2.0, 30.0);
+        let accuracy = self.hasher.next_range_f64(99.0, 99.99);
+        let temp = self.hasher.next_range_f64(25.0, 60.0);
+        format!(r#"{{"cycle_time_sec":{:.2},"accuracy_pct":{:.2},"motor_temp_c":{:.1},"operations_count":{},"status":"{}"}}"#,
+            cycle_time, accuracy, temp, self.hasher.next_range(1000, 100000),
+            ["running", "idle", "maintenance"][self.hasher.next_usize(3)])
     }
 
     fn telemetry_cnc_machine(&mut self) -> String {
-        let spindle_rpm = self.hasher.next_range(0, 15000);
-        let feed_rate = self.hasher.next_range_f64(0.0, 500.0);
-        format!(r#"{{"spindle_rpm":{},"feed_rate_mmpm":{:.1},"tool_wear_pct":{},"parts_count":{}}}"#,
-            spindle_rpm, feed_rate, self.hasher.next_usize(100), self.hasher.next_range(0, 1000))
+        let spindle_rpm = self.hasher.next_range(1000, 20000);
+        let feed_rate = self.hasher.next_range_f64(100.0, 5000.0);
+        let tool_wear = self.hasher.next_range_f64(0.0, 100.0);
+        format!(r#"{{"spindle_rpm":{},"feed_rate_mmpm":{:.1},"tool_wear_pct":{:.1},"coolant_temp_c":{:.1}}}"#,
+            spindle_rpm, feed_rate, tool_wear, self.hasher.next_range_f64(15.0, 35.0))
     }
 
     fn telemetry_vibration(&mut self) -> String {
-        let rms = self.hasher.next_range_f64(0.1, 10.0);
-        let peak = rms * (1.0 + self.hasher.next_f64());
         let freq = self.hasher.next_range_f64(10.0, 1000.0);
-        format!(r#"{{"rms_mm_s":{:.2},"peak_mm_s":{:.2},"dominant_freq_hz":{:.1},"anomaly":{}}}"#,
-            rms, peak, freq, self.hasher.next_f64() > 0.9)
+        let amplitude = self.hasher.next_range_f64(0.01, 10.0);
+        let rms = self.hasher.next_range_f64(0.1, 5.0);
+        format!(r#"{{"frequency_hz":{:.1},"amplitude_mm":{:.3},"rms_velocity":{:.2},"alarm":{}}}"#,
+            freq, amplitude, rms, amplitude > 5.0)
     }
 
     fn telemetry_pressure(&mut self) -> String {
-        let pressure = self.hasher.next_range_f64(0.0, 100.0);
-        format!(r#"{{"pressure_bar":{:.2},"flow_lpm":{:.1},"temp_c":{:.1}}}"#,
-            pressure, self.hasher.next_range_f64(0.0, 500.0), self.hasher.next_range_f64(10.0, 80.0))
+        let pressure = self.hasher.next_range_f64(0.0, 1000.0);
+        let unit = ["bar", "psi", "kPa"][self.hasher.next_usize(3)];
+        format!(r#"{{"pressure":{:.2},"unit":"{}","temp_c":{:.1},"status":"{}"}}"#,
+            pressure, unit, self.hasher.next_range_f64(-20.0, 80.0),
+            ["normal", "warning", "critical"][self.hasher.next_usize(3)])
     }
 
     fn telemetry_conveyor(&mut self) -> String {
-        let speed = self.hasher.next_range_f64(0.0, 5.0);
+        let speed = self.hasher.next_range_f64(0.1, 5.0);
         let items = self.hasher.next_range(0, 1000);
-        format!(r#"{{"speed_mps":{:.2},"items_count":{},"belt_temp_c":{:.1},"motor_current_a":{:.1}}}"#,
-            speed, items, self.hasher.next_range_f64(20.0, 60.0), self.hasher.next_range_f64(1.0, 50.0))
+        format!(r#"{{"speed_mps":{:.2},"items_per_hour":{},"motor_current_a":{:.1},"belt_tension_n":{:.0}}}"#,
+            speed, items, self.hasher.next_range_f64(5.0, 50.0), self.hasher.next_range_f64(100.0, 500.0))
     }
 
     // Agriculture Telemetry
@@ -662,45 +626,54 @@ impl MempoolManager {
         let moisture = self.hasher.next_range_f64(10.0, 80.0);
         let ph = self.hasher.next_range_f64(4.0, 9.0);
         let temp = self.hasher.next_range_f64(5.0, 35.0);
-        format!(r#"{{"moisture_pct":{:.1},"ph":{:.1},"temp_c":{:.1},"nitrogen_ppm":{},"phosphorus_ppm":{}}}"#,
-            moisture, ph, temp, self.hasher.next_range(0, 200), self.hasher.next_range(0, 100))
+        let ec = self.hasher.next_range_f64(0.1, 4.0);
+        format!(r#"{{"moisture_pct":{:.1},"ph":{:.2},"temp_c":{:.1},"ec_dsm":{:.2},"nitrogen_ppm":{},"phosphorus_ppm":{},"potassium_ppm":{}}}"#,
+            moisture, ph, temp, ec, self.hasher.next_range(10, 200), self.hasher.next_range(5, 100), self.hasher.next_range(50, 300))
     }
 
     fn telemetry_irrigation(&mut self) -> String {
-        let active = self.hasher.next_f64() > 0.5;
-        let flow = if active { self.hasher.next_range_f64(1.0, 50.0) } else { 0.0 };
-        format!(r#"{{"active":{},"flow_lpm":{:.1},"pressure_bar":{:.1},"zone":{}}}"#,
-            active, flow, self.hasher.next_range_f64(1.0, 5.0), self.hasher.next_usize(10))
+        let flow_rate = self.hasher.next_range_f64(0.0, 100.0);
+        let pressure = self.hasher.next_range_f64(1.0, 6.0);
+        format!(r#"{{"flow_rate_lpm":{:.1},"pressure_bar":{:.2},"valve_open":{},"zone":"{}","duration_min":{}}}"#,
+            flow_rate, pressure, flow_rate > 0.0, ["north", "south", "east", "west"][self.hasher.next_usize(4)],
+            self.hasher.next_usize(60))
     }
 
     fn telemetry_drone(&mut self) -> String {
-        let altitude = self.hasher.next_range_f64(0.0, 120.0);
+        let alt = self.hasher.next_range_f64(10.0, 120.0);
+        let speed = self.hasher.next_range_f64(0.0, 20.0);
         let battery = self.hasher.next_usize(100);
-        format!(r#"{{"altitude_m":{:.1},"battery_pct":{},"speed_kmh":{:.1},"coverage_ha":{:.2}}}"#,
-            altitude, battery, self.hasher.next_range_f64(0.0, 60.0), self.hasher.next_range_f64(0.0, 10.0))
+        format!(r#"{{"altitude_m":{:.1},"speed_mps":{:.1},"battery_pct":{},"lat":{:.6},"lng":{:.6},"mission":"{}"}}"#,
+            alt, speed, battery, self.hasher.next_range_f64(-90.0, 90.0), self.hasher.next_range_f64(-180.0, 180.0),
+            ["survey", "spray", "monitor", "return"][self.hasher.next_usize(4)])
     }
 
     fn telemetry_greenhouse(&mut self) -> String {
         let temp = self.hasher.next_range_f64(15.0, 35.0);
         let humidity = self.hasher.next_range_f64(40.0, 90.0);
         let co2 = self.hasher.next_range(400, 1500);
-        format!(r#"{{"temp_c":{:.1},"humidity_pct":{:.1},"co2_ppm":{},"light_lux":{}}}"#,
-            temp, humidity, co2, self.hasher.next_range(0, 100000))
+        let light = self.hasher.next_range(0, 100000);
+        format!(r#"{{"temp_c":{:.1},"humidity_pct":{:.1},"co2_ppm":{},"light_lux":{},"ventilation_pct":{}}}"#,
+            temp, humidity, co2, light, self.hasher.next_usize(100))
     }
 
     // Energy Telemetry
     fn telemetry_smart_meter(&mut self) -> String {
-        let power = self.hasher.next_range_f64(0.0, 15.0);
+        let power = self.hasher.next_range_f64(0.1, 50.0);
         let voltage = self.hasher.next_range_f64(220.0, 240.0);
-        format!(r#"{{"power_kw":{:.2},"voltage_v":{:.1},"current_a":{:.1},"energy_kwh":{:.1},"pf":{:.2}}}"#,
-            power, voltage, power * 1000.0 / voltage, self.hasher.next_range_f64(0.0, 1000.0), self.hasher.next_range_f64(0.8, 1.0))
+        let current = power * 1000.0 / voltage;
+        let pf = self.hasher.next_range_f64(0.8, 1.0);
+        format!(r#"{{"power_kw":{:.2},"voltage_v":{:.1},"current_a":{:.2},"power_factor":{:.2},"energy_kwh":{:.1},"tariff":"{}"}}"#,
+            power, voltage, current, pf, self.hasher.next_range_f64(0.0, 1000.0),
+            ["peak", "off_peak", "standard"][self.hasher.next_usize(3)])
     }
 
     fn telemetry_solar(&mut self) -> String {
-        let irradiance = self.hasher.next_range_f64(0.0, 1000.0);
-        let power = irradiance * 0.2 * self.hasher.next_range_f64(0.8, 1.0);
-        format!(r#"{{"irradiance_wm2":{:.1},"power_kw":{:.2},"efficiency_pct":{:.1},"panel_temp_c":{:.1}}}"#,
-            irradiance, power / 1000.0, self.hasher.next_range_f64(15.0, 22.0), self.hasher.next_range_f64(20.0, 70.0))
+        let irradiance = self.hasher.next_range_f64(0.0, 1200.0);
+        let power = irradiance * 0.2 * self.hasher.next_range_f64(0.8, 1.0) / 100.0;
+        let efficiency = self.hasher.next_range_f64(15.0, 22.0);
+        format!(r#"{{"irradiance_wm2":{:.1},"power_kw":{:.2},"efficiency_pct":{:.1},"panel_temp_c":{:.1},"energy_today_kwh":{:.1}}}"#,
+            irradiance, power, efficiency, self.hasher.next_range_f64(20.0, 70.0), self.hasher.next_range_f64(0.0, 50.0))
     }
 
     fn telemetry_wind_turbine(&mut self) -> String {
@@ -708,65 +681,151 @@ impl MempoolManager {
         let power = if wind_speed > 3.0 && wind_speed < 25.0 {
             (wind_speed.powi(3) * 0.5).min(3000.0)
         } else { 0.0 };
-        format!(r#"{{"wind_speed_ms":{:.1},"power_kw":{:.1},"rpm":{},"yaw_deg":{:.1}}}"#,
-            wind_speed, power, self.hasher.next_range(0, 20), self.hasher.next_range_f64(0.0, 360.0))
+        format!(r#"{{"wind_speed_mps":{:.1},"power_kw":{:.1},"rotor_rpm":{:.1},"pitch_angle_deg":{:.1},"yaw_angle_deg":{:.1}}}"#,
+            wind_speed, power, self.hasher.next_range_f64(0.0, 20.0), self.hasher.next_range_f64(0.0, 90.0),
+            self.hasher.next_range_f64(0.0, 360.0))
     }
 
     fn telemetry_battery(&mut self) -> String {
         let soc = self.hasher.next_range_f64(10.0, 100.0);
-        let power = self.hasher.next_range_f64(-100.0, 100.0); // Negative = charging
-        format!(r#"{{"soc_pct":{:.1},"power_kw":{:.1},"voltage_v":{:.1},"temp_c":{:.1},"cycles":{}}}"#,
-            soc, power, self.hasher.next_range_f64(48.0, 52.0), self.hasher.next_range_f64(20.0, 45.0), self.hasher.next_range(0, 5000))
+        let power = self.hasher.next_range_f64(-500.0, 500.0); // Negative = charging
+        let temp = self.hasher.next_range_f64(15.0, 45.0);
+        format!(r#"{{"soc_pct":{:.1},"power_kw":{:.1},"voltage_v":{:.1},"temp_c":{:.1},"cycles":{},"health_pct":{:.1}}}"#,
+            soc, power, self.hasher.next_range_f64(300.0, 800.0), temp, self.hasher.next_range(0, 5000),
+            self.hasher.next_range_f64(80.0, 100.0))
     }
 
     // Healthcare Telemetry
     fn telemetry_patient_monitor(&mut self) -> String {
         let hr = self.hasher.next_range(50, 120);
         let spo2 = self.hasher.next_range(90, 100);
-        let bp_sys = self.hasher.next_range(90, 160);
-        let bp_dia = self.hasher.next_range(60, 100);
-        format!(r#"{{"heart_rate_bpm":{},"spo2_pct":{},"bp_systolic":{},"bp_diastolic":{},"temp_c":{:.1}}}"#,
-            hr, spo2, bp_sys, bp_dia, self.hasher.next_range_f64(36.0, 38.5))
+        let bp_sys = self.hasher.next_range(90, 180);
+        let bp_dia = self.hasher.next_range(60, 110);
+        let temp = self.hasher.next_range_f64(36.0, 39.0);
+        format!(r#"{{"heart_rate_bpm":{},"spo2_pct":{},"bp_systolic":{},"bp_diastolic":{},"temp_c":{:.1},"resp_rate":{}}}"#,
+            hr, spo2, bp_sys, bp_dia, temp, self.hasher.next_range(12, 25))
     }
 
     fn telemetry_ventilator(&mut self) -> String {
-        let tidal = self.hasher.next_range(300, 700);
-        let rate = self.hasher.next_range(10, 25);
+        let tidal_vol = self.hasher.next_range(300, 800);
+        let resp_rate = self.hasher.next_range(10, 30);
         let fio2 = self.hasher.next_range(21, 100);
-        format!(r#"{{"tidal_volume_ml":{},"resp_rate":{},"fio2_pct":{},"peep_cmh2o":{},"pip_cmh2o":{}}}"#,
-            tidal, rate, fio2, self.hasher.next_range(5, 15), self.hasher.next_range(15, 35))
+        format!(r#"{{"tidal_volume_ml":{},"resp_rate":{},"fio2_pct":{},"peep_cmh2o":{},"pip_cmh2o":{},"mode":"{}"}}"#,
+            tidal_vol, resp_rate, fio2, self.hasher.next_range(5, 15), self.hasher.next_range(15, 40),
+            ["AC", "SIMV", "PSV", "CPAP"][self.hasher.next_usize(4)])
     }
 
     // Logistics Telemetry
     fn telemetry_gps(&mut self) -> String {
-        let (_, lat, lng) = self.random_region();
+        let lat = self.hasher.next_range_f64(-90.0, 90.0);
+        let lng = self.hasher.next_range_f64(-180.0, 180.0);
         let speed = self.hasher.next_range_f64(0.0, 120.0);
-        format!(r#"{{"lat":{:.6},"lng":{:.6},"speed_kmh":{:.1},"heading_deg":{},"altitude_m":{}}}"#,
-            lat + self.hasher.next_range_f64(-0.1, 0.1), 
-            lng + self.hasher.next_range_f64(-0.1, 0.1), 
-            speed, self.hasher.next_range(0, 360), self.hasher.next_range(0, 500))
+        let heading = self.hasher.next_range_f64(0.0, 360.0);
+        format!(r#"{{"lat":{:.6},"lng":{:.6},"speed_kmh":{:.1},"heading_deg":{:.1},"altitude_m":{:.1},"accuracy_m":{:.1}}}"#,
+            lat, lng, speed, heading, self.hasher.next_range_f64(0.0, 500.0), self.hasher.next_range_f64(1.0, 20.0))
     }
 
     fn telemetry_cold_chain(&mut self) -> String {
         let temp = self.hasher.next_range_f64(-25.0, 8.0);
         let humidity = self.hasher.next_range_f64(30.0, 90.0);
-        format!(r#"{{"temp_c":{:.1},"humidity_pct":{:.1},"door_open":{},"compressor_on":{}}}"#,
-            temp, humidity, self.hasher.next_f64() > 0.9, self.hasher.next_f64() > 0.3)
+        let door_open = self.hasher.next_f64() > 0.9;
+        format!(r#"{{"temp_c":{:.1},"humidity_pct":{:.1},"door_open":{},"compressor_on":{},"alert":{}}}"#,
+            temp, humidity, door_open, temp > -18.0, temp > 0.0)
     }
 
     // Edge AI Telemetry
     fn telemetry_edge_compute(&mut self) -> String {
-        let gpu_util = self.hasher.next_usize(100);
+        let gpu_util = self.hasher.next_range_f64(0.0, 100.0);
         let gpu_temp = self.hasher.next_range_f64(30.0, 85.0);
-        let memory_used = self.hasher.next_range_f64(0.0, 32.0);
-        format!(r#"{{"gpu_util_pct":{},"gpu_temp_c":{:.1},"memory_gb":{:.1},"inference_ms":{:.1},"throughput_fps":{:.1}}}"#,
-            gpu_util, gpu_temp, memory_used, self.hasher.next_range_f64(1.0, 100.0), self.hasher.next_range_f64(1.0, 60.0))
+        let mem_used = self.hasher.next_range_f64(0.0, 100.0);
+        let inferences = self.hasher.next_range(0, 10000);
+        format!(r#"{{"gpu_util_pct":{:.1},"gpu_temp_c":{:.1},"mem_used_pct":{:.1},"inferences_per_sec":{},"model_loaded":"{}","power_w":{:.1}}}"#,
+            gpu_util, gpu_temp, mem_used, inferences,
+            ["yolov8", "resnet50", "bert", "gpt2", "whisper"][self.hasher.next_usize(5)],
+            self.hasher.next_range_f64(50.0, 350.0))
     }
 
     fn telemetry_generic(&mut self) -> String {
-        format!(r#"{{"value":{:.2},"status":"{}","uptime_hours":{}}}"#,
-            self.hasher.next_range_f64(0.0, 100.0),
-            ["normal", "warning", "error"][self.hasher.next_usize(3)],
-            self.hasher.next_range(0, 10000))
+        let value = self.hasher.next_range_f64(0.0, 100.0);
+        format!(r#"{{"value":{:.2},"unit":"generic","status":"{}"}}"#, value,
+            ["normal", "warning", "error"][self.hasher.next_usize(3)])
+    }
+}
+
+// ============================================================================
+// REAL IOT DATA INTERFACE (Future Integration)
+// ============================================================================
+
+/// External IoT data submission structure
+/// This structure is designed for future real IoT device integration
+#[derive(Debug, Clone)]
+pub struct ExternalIoTData {
+    /// Device identifier (must be registered)
+    pub device_id: String,
+    /// Raw telemetry data in JSON format
+    pub telemetry: String,
+    /// Data category (SmartCity, Manufacturing, etc.)
+    pub category: String,
+    /// Geographic location
+    pub location: Option<(f64, f64)>,
+    /// Timestamp of data collection
+    pub timestamp: i64,
+    /// Digital signature for authentication
+    pub signature: Option<String>,
+}
+
+impl ExternalIoTData {
+    /// Convert external IoT data to a blockchain transaction
+    /// This method will be used when real IoT devices submit data
+    pub fn to_transaction(&self) -> Transaction {
+        let data = format!(
+            r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{}}}"#,
+            self.device_id,
+            self.category,
+            self.telemetry,
+            self.location.map(|l| l.0).unwrap_or(0.0),
+            self.location.map(|l| l.1).unwrap_or(0.0),
+            self.timestamp
+        );
+
+        let reward = 50; // Base reward for external data
+        let output = TxOutput {
+            amount: reward,
+            recipient: self.device_id.clone(),
+            data_hash: Some(format!("ext_{:x}", self.timestamp)),
+        };
+
+        Transaction::new(
+            TransactionType::DataContribution,
+            self.device_id.clone(),
+            vec![],
+            vec![output],
+            Some(data),
+            1,
+            21000,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mempool_collection() {
+        let mut mgr = MempoolManager::with_block_context(12345);
+        let txs = mgr.collect_pending(20);
+        
+        assert_eq!(txs.len(), 20);
+        for tx in &txs {
+            assert!(!tx.hash.is_empty());
+        }
+    }
+    
+    #[test]
+    fn test_device_count() {
+        let mgr = MempoolManager::with_block_context(1);
+        // Should have 200+ devices
+        assert!(mgr.all_devices.len() > 200);
     }
 }

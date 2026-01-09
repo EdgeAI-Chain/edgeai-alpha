@@ -203,22 +203,44 @@ impl Blockchain {
     
     /// Add a transaction to pending pool
     pub fn add_transaction(&mut self, tx: Transaction) -> Result<String, String> {
-        // Validate transaction
+        // Validate transaction hash
         if !tx.verify() {
             return Err("Invalid transaction hash".to_string());
         }
         
-        // Check sender balance for transfers
-        if tx.tx_type == TransactionType::Transfer {
-            let sender_balance = self.get_balance(&tx.sender);
-            if sender_balance < tx.total_output() {
-                return Err("Insufficient balance".to_string());
-            }
+        // Apply validation rules based on transaction type
+        match tx.tx_type {
+            // Transfer requires balance check
+            TransactionType::Transfer => {
+                let sender_balance = self.get_balance(&tx.sender);
+                if sender_balance < tx.total_output() {
+                    return Err("Insufficient balance".to_string());
+                }
+            },
+            // DataContribution: IoT devices contribute data and receive rewards
+            // No balance check needed - devices earn tokens by contributing data (PoIE)
+            TransactionType::DataContribution => {
+                // Future: Add data quality validation, device signature verification, etc.
+            },
+            // DataPurchase requires balance check
+            TransactionType::DataPurchase => {
+                let sender_balance = self.get_balance(&tx.sender);
+                if sender_balance < tx.total_output() {
+                    return Err("Insufficient balance".to_string());
+                }
+            },
+            // Contract operations may require balance for gas fees
+            TransactionType::ContractDeploy | TransactionType::ContractCall => {
+                // For now, allow contract operations without balance check
+                // Future: Implement gas fee mechanism
+            },
+            // Genesis and Reward transactions are system-generated
+            _ => {}
         }
         
         let tx_hash = tx.hash.clone();
         self.pending_transactions.push(tx);
-        info!("Transaction {} added to pending pool", &tx_hash[..8]);
+        info!("Transaction {} added to pending pool (type: {:?})", &tx_hash[..8], tx.tx_type);
         
         Ok(tx_hash)
     }

@@ -15,6 +15,7 @@ import { ALL_GLOBE_MARKERS } from "@/lib/globeData";
 import { useTransactionSimulator } from "@/hooks/useTransactionSimulator";
 import { TOTAL_VALIDATOR_COUNT } from "@/lib/validators";
 
+// Dashboard component - PoIE metrics enabled
 export default function Dashboard() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [stats, setStats] = useState({

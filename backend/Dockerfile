@@ -53,12 +53,26 @@ RUN chown -R edgeai:edgeai /app
 # Switch to non-root user
 USER edgeai
 
-# Expose port
-EXPOSE 8080
+# Expose ports
+# 8080 - HTTP API
+# 9000 - P2P Network
+EXPOSE 8080 9000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/api/chain || exit 1
+
+# Environment variables for configuration
+# EDGEAI_BOOTSTRAP_NODES - Comma-separated list of bootstrap node addresses
+# EDGEAI_P2P_PORT - P2P listening port (default: 9000)
+# EDGEAI_HTTP_PORT - HTTP API port (default: 8080)
+ENV EDGEAI_BOOTSTRAP_NODES=""
+ENV EDGEAI_P2P_PORT=9000
+ENV EDGEAI_HTTP_PORT=8080
+
+# Create data directory
+RUN mkdir -p /data && chown edgeai:edgeai /data
+VOLUME /data
 
 # Run the application
 CMD ["./edgeai-node"]

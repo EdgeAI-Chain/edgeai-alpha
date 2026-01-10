@@ -70,16 +70,33 @@ async fn main() -> std::io::Result<()> {
     info!("Network manager initialized (Node ID: {})", &node_id);
     
     // Initialize libp2p P2P network
+    // Read configuration from environment variables
+    let p2p_port: u16 = std::env::var("EDGEAI_P2P_PORT")
+        .unwrap_or_else(|_| "9000".to_string())
+        .parse()
+        .unwrap_or(9000);
+    
+    let bootstrap_nodes: Vec<String> = std::env::var("EDGEAI_BOOTSTRAP_NODES")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim().to_string())
+        .collect();
+    
+    if !bootstrap_nodes.is_empty() {
+        info!("Bootstrap nodes: {:?}", bootstrap_nodes);
+    }
+    
     let p2p_config = NetworkConfig {
-        listen_port: 9000,
-        bootstrap_nodes: vec![],  // Add bootstrap nodes here for production
+        listen_port: p2p_port,
+        bootstrap_nodes,
         enable_mdns: true,
         max_peers: 50,
     };
     
     let (p2p_command_tx, mut p2p_event_rx) = match start_p2p_network(p2p_config).await {
         Ok((tx, rx)) => {
-            info!("libp2p P2P network started on port 9000");
+            info!("libp2p P2P network started on port {}", p2p_port);
             (Some(tx), Some(rx))
         }
         Err(e) => {

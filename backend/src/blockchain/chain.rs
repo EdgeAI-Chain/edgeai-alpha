@@ -9,6 +9,7 @@ use rayon::prelude::*;
 
 use crate::blockchain::block::Block;
 use crate::blockchain::transaction::{Transaction, TransactionType};
+use crate::blockchain::storage::Storage;
 
 const DATA_DIR: &str = "/data";
 const BLOCKS_FILE: &str = "blocks.jsonl";  // JSON Lines format for append-only
@@ -71,6 +72,7 @@ pub struct ChainMetadata {
 }
 
 /// The main blockchain structure - optimized for memory efficiency
+/// Now uses RocksDB for persistent storage with file-based fallback
 #[derive(Serialize, Deserialize)]
 pub struct Blockchain {
     /// Only keep recent blocks in memory for API queries
@@ -78,6 +80,9 @@ pub struct Blockchain {
     pub chain: Vec<Block>,
     #[serde(skip)]
     pub pending_transactions: Vec<Transaction>,
+    /// RocksDB storage backend (primary)
+    #[serde(skip)]
+    storage: Option<Storage>,
     pub state: ChainState,
     pub difficulty: u64,
     pub block_reward: u64,
@@ -143,9 +148,22 @@ impl Blockchain {
         
         info!("Blockchain initialized with genesis block");
         
+        // Initialize RocksDB storage
+        let storage = match Storage::open(DATA_DIR) {
+            Ok(s) => {
+                info!("RocksDB storage initialized");
+                Some(s)
+            }
+            Err(e) => {
+                warn!("Failed to initialize RocksDB: {}, falling back to file storage", e);
+                None
+            }
+        };
+        
         let mut chain = Blockchain {
             chain: vec![genesis.clone()],
             pending_transactions: Vec::new(),
+            storage,
             state,
             difficulty: 2,
             block_reward: 100,
@@ -154,20 +172,28 @@ impl Blockchain {
             total_blocks: 1,
         };
 
-        // Save initial state
-        chain.append_block_to_disk(&genesis);
-        chain.save_state_to_disk();
+        // Save initial state to both RocksDB and file (for compatibility)
+        chain.persist_block(&genesis);
+        chain.persist_state();
         chain
     }
 
     /// Load blockchain from disk - memory efficient version
+    /// Priority: RocksDB > New file format > Legacy format
     fn load_from_disk() -> Option<Self> {
+        // Try RocksDB first (primary storage)
+        if let Some(chain) = Self::load_from_rocksdb() {
+            info!("Loaded blockchain from RocksDB");
+            return Some(chain);
+        }
+        
         let state_path = Path::new(DATA_DIR).join(STATE_FILE);
         let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
         
-        // Try new format first
+        // Try file format and migrate to RocksDB
         if state_path.exists() && blocks_path.exists() {
-            return Self::load_new_format();
+            info!("Loading from file format and migrating to RocksDB...");
+            return Self::load_new_format_and_migrate();
         }
         
         // Fall back to legacy format
@@ -180,8 +206,77 @@ impl Blockchain {
         None
     }
     
-    /// Load from new optimized format
-    fn load_new_format() -> Option<Self> {
+    /// Load from RocksDB storage
+    fn load_from_rocksdb() -> Option<Self> {
+        let storage = Storage::open(DATA_DIR).ok()?;
+        
+        // Check if RocksDB has data
+        let metadata = storage.get_metadata()?;
+        if metadata.total_blocks == 0 {
+            return None;
+        }
+        
+        // Load recent blocks into memory
+        let recent_blocks = storage.get_recent_blocks(MAX_BLOCKS_IN_MEMORY);
+        if recent_blocks.is_empty() {
+            return None;
+        }
+        
+        // Reconstruct state from RocksDB
+        // For now, we still keep state in memory for fast access
+        // Future optimization: lazy load accounts from RocksDB
+        let total_supply = storage.get_total_supply();
+        let total_staked = storage.get_total_staked();
+        
+        // Load accounts from file (RocksDB account loading is optional optimization)
+        let state_path = Path::new(DATA_DIR).join(STATE_FILE);
+        let state = if state_path.exists() {
+            if let Ok(data) = fs::read_to_string(&state_path) {
+                if let Ok((s, _)) = serde_json::from_str::<(ChainState, ChainMetadata)>(&data) {
+                    s
+                } else {
+                    ChainState {
+                        accounts: HashMap::new(),
+                        data_registry: HashMap::new(),
+                        total_supply,
+                        total_staked,
+                    }
+                }
+            } else {
+                ChainState {
+                    accounts: HashMap::new(),
+                    data_registry: HashMap::new(),
+                    total_supply,
+                    total_staked,
+                }
+            }
+        } else {
+            ChainState {
+                accounts: HashMap::new(),
+                data_registry: HashMap::new(),
+                total_supply,
+                total_staked,
+            }
+        };
+        
+        let mut chain = Blockchain {
+            chain: recent_blocks,
+            pending_transactions: Vec::new(),
+            storage: Some(storage),
+            state,
+            difficulty: metadata.difficulty,
+            block_reward: metadata.block_reward,
+            data_reward_base: metadata.data_reward_base,
+            last_block_time: metadata.last_block_time,
+            total_blocks: metadata.total_blocks,
+        };
+        
+        chain.ensure_device_accounts();
+        Some(chain)
+    }
+    
+    /// Load from new optimized format and migrate to RocksDB
+    fn load_new_format_and_migrate() -> Option<Self> {
         let state_path = Path::new(DATA_DIR).join(STATE_FILE);
         let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
         
@@ -189,12 +284,59 @@ impl Blockchain {
         let state_data = fs::read_to_string(&state_path).ok()?;
         let (state, metadata): (ChainState, ChainMetadata) = serde_json::from_str(&state_data).ok()?;
         
+        // Initialize RocksDB and migrate blocks
+        let storage = match Storage::open(DATA_DIR) {
+            Ok(s) => {
+                info!("Migrating {} blocks to RocksDB...", metadata.total_blocks);
+                
+                // Read all blocks from JSONL and write to RocksDB
+                if let Ok(file) = fs::File::open(&blocks_path) {
+                    let reader = BufReader::new(file);
+                    let mut migrated = 0u64;
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if let Ok(block) = serde_json::from_str::<Block>(&line) {
+                                if let Err(e) = s.put_block(&block) {
+                                    warn!("Failed to migrate block {}: {}", block.index, e);
+                                } else {
+                                    migrated += 1;
+                                }
+                            }
+                        }
+                    }
+                    info!("Migrated {} blocks to RocksDB", migrated);
+                }
+                
+                // Save metadata to RocksDB
+                if let Err(e) = s.put_metadata(&metadata) {
+                    warn!("Failed to save metadata to RocksDB: {}", e);
+                }
+                
+                // Save accounts to RocksDB
+                if let Err(e) = s.put_accounts_batch(&state.accounts) {
+                    warn!("Failed to save accounts to RocksDB: {}", e);
+                }
+                
+                // Save supply info
+                if let Err(e) = s.put_supply_info(state.total_supply, state.total_staked) {
+                    warn!("Failed to save supply info to RocksDB: {}", e);
+                }
+                
+                Some(s)
+            }
+            Err(e) => {
+                warn!("Failed to initialize RocksDB for migration: {}", e);
+                None
+            }
+        };
+        
         // Load only the last N blocks into memory
         let recent_blocks = Self::load_recent_blocks(&blocks_path, MAX_BLOCKS_IN_MEMORY)?;
         
         let mut chain = Blockchain {
             chain: recent_blocks,
             pending_transactions: Vec::new(),
+            storage,
             state,
             difficulty: metadata.difficulty,
             block_reward: metadata.block_reward,
@@ -271,9 +413,39 @@ impl Blockchain {
         };
         let recent_blocks: Vec<Block> = legacy.chain[recent_start..].to_vec();
         
+        // Initialize RocksDB and migrate
+        let storage = match Storage::open(DATA_DIR) {
+            Ok(s) => {
+                info!("Migrating {} legacy blocks to RocksDB...", total_blocks);
+                for block in &legacy.chain {
+                    if let Err(e) = s.put_block(block) {
+                        warn!("Failed to migrate block {}: {}", block.index, e);
+                    }
+                }
+                
+                let metadata = ChainMetadata {
+                    total_blocks,
+                    difficulty: legacy.difficulty,
+                    block_reward: legacy.block_reward,
+                    data_reward_base: legacy.data_reward_base,
+                    last_block_time: legacy.last_block_time,
+                };
+                let _ = s.put_metadata(&metadata);
+                let _ = s.put_accounts_batch(&legacy.state.accounts);
+                let _ = s.put_supply_info(legacy.state.total_supply, legacy.state.total_staked);
+                
+                Some(s)
+            }
+            Err(e) => {
+                warn!("Failed to initialize RocksDB: {}", e);
+                None
+            }
+        };
+        
         let mut chain = Blockchain {
             chain: recent_blocks,
             pending_transactions: Vec::new(),
+            storage,
             state: legacy.state,
             difficulty: legacy.difficulty,
             block_reward: legacy.block_reward,
@@ -287,7 +459,7 @@ impl Blockchain {
         
         // Remove legacy file
         let _ = fs::remove_file(&legacy_path);
-        info!("Migration complete: {} blocks migrated to new format", total_blocks);
+        info!("Migration complete: {} blocks migrated to RocksDB", total_blocks);
         
         chain.ensure_device_accounts();
         Some(chain)
@@ -386,6 +558,49 @@ impl Blockchain {
 
     /// Legacy save_to_disk for compatibility - now uses optimized storage
     pub fn save_to_disk(&self) {
+        self.persist_state();
+    }
+    
+    /// Persist a block to storage (RocksDB primary, file fallback)
+    fn persist_block(&self, block: &Block) {
+        // Write to RocksDB if available
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage.put_block(block) {
+                error!("Failed to write block to RocksDB: {}", e);
+            }
+        }
+        
+        // Also write to file for compatibility during migration period
+        self.append_block_to_disk(block);
+    }
+    
+    /// Persist state to storage (RocksDB primary, file fallback)
+    fn persist_state(&self) {
+        // Write to RocksDB if available
+        if let Some(ref storage) = self.storage {
+            let metadata = ChainMetadata {
+                total_blocks: self.total_blocks,
+                difficulty: self.difficulty,
+                block_reward: self.block_reward,
+                data_reward_base: self.data_reward_base,
+                last_block_time: self.last_block_time,
+            };
+            
+            if let Err(e) = storage.put_metadata(&metadata) {
+                error!("Failed to write metadata to RocksDB: {}", e);
+            }
+            
+            if let Err(e) = storage.put_supply_info(self.state.total_supply, self.state.total_staked) {
+                error!("Failed to write supply info to RocksDB: {}", e);
+            }
+            
+            // Optionally flush to ensure durability
+            if let Err(e) = storage.flush() {
+                warn!("Failed to flush RocksDB: {}", e);
+            }
+        }
+        
+        // Also write to file for compatibility
         self.save_state_to_disk();
     }
     
@@ -417,14 +632,21 @@ impl Blockchain {
         None
     }
     
-    /// Get block by index with disk fallback
+    /// Get block by index with disk fallback (RocksDB primary, file fallback)
     pub fn get_block_with_disk_fallback(&self, index: u64) -> Option<Block> {
-        // Check memory first
+        // Check memory first (fastest)
         if let Some(block) = self.get_block(index) {
             return Some(block.clone());
         }
         
-        // Load from disk
+        // Try RocksDB (O(1) lookup)
+        if let Some(ref storage) = self.storage {
+            if let Some(block) = storage.get_block(index) {
+                return Some(block);
+            }
+        }
+        
+        // Fall back to file (O(n) scan - legacy compatibility)
         let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
         if let Ok(file) = fs::File::open(&blocks_path) {
             let reader = BufReader::new(file);
@@ -445,16 +667,24 @@ impl Blockchain {
     }
 
     /// Get transaction by hash (returns a clone to avoid lifetime issues)
+    /// Now supports RocksDB lookup for O(1) transaction retrieval
     pub fn get_transaction(&self, hash: &str) -> Option<Transaction> {
         // Search in pending transactions first
         if let Some(tx) = self.pending_transactions.iter().find(|tx| tx.hash == hash) {
             return Some(tx.clone());
         }
         
-        // Search in blocks (only in-memory blocks)
+        // Search in in-memory blocks (fast for recent transactions)
         for block in self.chain.iter().rev() {
             if let Some(tx) = block.transactions.iter().find(|tx| tx.hash == hash) {
                 return Some(tx.clone());
+            }
+        }
+        
+        // Try RocksDB (O(1) lookup for historical transactions)
+        if let Some(ref storage) = self.storage {
+            if let Some(tx) = storage.get_transaction(hash) {
+                return Some(tx);
             }
         }
         
@@ -631,12 +861,12 @@ impl Blockchain {
         info!("Block {} mined by {} ({} blocks in memory)", 
               index, &validator[..8.min(validator.len())], self.chain.len());
         
-        // Append only this block to disk (memory efficient!)
-        self.append_block_to_disk(&block);
+        // Persist block to RocksDB and file (dual-write for migration period)
+        self.persist_block(&block);
         
         // Save state periodically (every 10 blocks to reduce I/O)
         if self.total_blocks % 10 == 0 {
-            self.save_state_to_disk();
+            self.persist_state();
         }
         
         // Prune old blocks from memory to prevent OOM

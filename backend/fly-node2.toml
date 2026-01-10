@@ -1,0 +1,53 @@
+# Fly.io Configuration for EdgeAI Blockchain Node 2
+# Deploy with: fly deploy -c fly-node2.toml
+
+app = "edgeai-blockchain-node-2"
+primary_region = "nrt"  # Tokyo - different region from node 1 (Singapore)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RUST_LOG = "info"
+  PORT = "8080"
+  # Connect to node 1 as bootstrap
+  EDGEAI_BOOTSTRAP_NODES = "/dns4/edgeai-blockchain-node.fly.dev/tcp/9000"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+# Expose P2P port
+[[services]]
+  internal_port = 9000
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 9000
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[checks]
+  [checks.health]
+    grace_period = "30s"
+    interval = "15s"
+    method = "get"
+    path = "/api/chain"
+    port = 8080
+    timeout = "10s"
+    type = "http"
+
+[mounts]
+  source = "edgeai_data_node2"
+  destination = "/data"

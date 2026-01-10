@@ -35,11 +35,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 edgeai
+# Create non-root user and group
+RUN groupadd -r edgeai && useradd -r -g edgeai -m -u 1000 edgeai
 
-# Create app directory
+# Create app and data directories
 WORKDIR /app
+RUN mkdir -p /data
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/edgeai-node /app/edgeai-node
@@ -47,8 +48,8 @@ COPY --from=builder /app/target/release/edgeai-node /app/edgeai-node
 # Copy static files if they exist
 COPY static ./static
 
-# Set ownership
-RUN chown -R edgeai:edgeai /app
+# Set ownership for app and data directories
+RUN chown -R edgeai:edgeai /app /data
 
 # Switch to non-root user
 USER edgeai
@@ -70,8 +71,7 @@ ENV EDGEAI_BOOTSTRAP_NODES=""
 ENV EDGEAI_P2P_PORT=9000
 ENV EDGEAI_HTTP_PORT=8080
 
-# Create data directory
-RUN mkdir -p /data && chown edgeai:edgeai /data
+# Data volume
 VOLUME /data
 
 # Run the application

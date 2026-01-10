@@ -22,6 +22,7 @@ use blockchain::{Blockchain, MempoolManager};
 use consensus::PoIEConsensus;
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
+use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
 use api::{AppState, configure_routes, configure_wallet_routes, configure_data_routes};
 
 const DATA_DIR: &str = "/data";
@@ -34,9 +35,10 @@ async fn main() -> std::io::Result<()> {
         .format_timestamp_secs()
         .init();
     
-    info!("===========================================");
-    info!("   EdgeAI Blockchain Node v0.1.0");
+   info!("============================================");
+    info!("   EdgeAI Blockchain Node v0.2.0");
     info!("   The Most Intelligent Data Chain");
+    info!("   Now with libp2p P2P Networking!");
     info!("===========================================");
     
     // Ensure data directory exists
@@ -67,6 +69,28 @@ async fn main() -> std::io::Result<()> {
     ));
     info!("Network manager initialized (Node ID: {})", &node_id);
     
+    // Initialize libp2p P2P network
+    let p2p_config = NetworkConfig {
+        listen_port: 9000,
+        bootstrap_nodes: vec![],  // Add bootstrap nodes here for production
+        enable_mdns: true,
+        max_peers: 50,
+    };
+    
+    let (p2p_command_tx, mut p2p_event_rx) = match start_p2p_network(p2p_config).await {
+        Ok((tx, rx)) => {
+            info!("libp2p P2P network started on port 9000");
+            (Some(tx), Some(rx))
+        }
+        Err(e) => {
+            log::warn!("Failed to start P2P network: {}. Running in standalone mode.", e);
+            (None, None)
+        }
+    };
+    
+    // Store P2P command sender for broadcasting
+    let p2p_tx = Arc::new(tokio::sync::RwLock::new(p2p_command_tx));
+    
     // Create app state
     let app_state = web::Data::new(AppState {
         blockchain: blockchain.clone(),
@@ -75,9 +99,45 @@ async fn main() -> std::io::Result<()> {
         network: network.clone(),
     });
 
+    // Start P2P event handler
+    if let Some(mut event_rx) = p2p_event_rx {
+        let p2p_blockchain = blockchain.clone();
+        tokio::spawn(async move {
+            info!("P2P event handler started");
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    NetworkEvent::PeerConnected(peer_id) => {
+                        info!("P2P: Peer connected: {}", peer_id);
+                    }
+                    NetworkEvent::PeerDisconnected(peer_id) => {
+                        info!("P2P: Peer disconnected: {}", peer_id);
+                    }
+                    NetworkEvent::NewTransaction(tx) => {
+                        info!("P2P: Received transaction: {}", &tx.hash[..8]);
+                        let mut chain = p2p_blockchain.write().await;
+                        if let Err(e) = chain.add_transaction(tx) {
+                            log::warn!("P2P: Transaction rejected: {}", e);
+                        }
+                    }
+                    NetworkEvent::NewBlock(block) => {
+                        info!("P2P: Received block #{}", block.index);
+                        // TODO: Validate and add block from peer
+                    }
+                    NetworkEvent::NewContribution(contrib) => {
+                        info!("P2P: Received contribution from {}", &contrib.device_id[..8]);
+                    }
+                    NetworkEvent::Ready => {
+                        info!("P2P: Network ready");
+                    }
+                }
+            }
+        });
+    }
+    
     // Start background mining task
     let mining_blockchain = blockchain.clone();
     let mining_validator = node_id.clone();
+    let mining_p2p_tx = p2p_tx.clone();
     
     tokio::spawn(async move {
         info!("Block producer started");
@@ -118,6 +178,12 @@ async fn main() -> std::io::Result<()> {
                 Ok(block) => {
                     info!("Produced block #{} with {} transactions", 
                           block.index, block.transactions.len());
+                    
+                    // Broadcast block to P2P network
+                    let p2p_guard = mining_p2p_tx.read().await;
+                    if let Some(ref tx) = *p2p_guard {
+                        let _ = tx.send(NetworkCommand::BroadcastBlock(block.clone())).await;
+                    }
                 },
                 Err(e) => {
                     log::warn!("Block production failed: {}", e);

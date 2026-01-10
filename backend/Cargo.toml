@@ -47,6 +47,10 @@ statrs = "0.17"
 # Parallel processing
 rayon = "1.10"
 
+# P2P Networking
+libp2p = { version = "0.54", features = ["tokio", "gossipsub", "mdns", "noise", "yamux", "tcp", "identify", "kad", "macros"] }
+async-trait = "0.1"
+
 [dev-dependencies]
 criterion = "0.5"
 

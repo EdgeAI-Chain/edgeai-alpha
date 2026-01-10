@@ -380,7 +380,7 @@ pub async fn submit_signed_data_contribution(
 
 /// Request structure for external IoT device data submission
 /// This API allows real IoT devices to submit telemetry data to the blockchain
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ExternalIoTDataRequest {
     /// Device identifier (will be used as sender address)
     pub device_id: String,
@@ -587,7 +587,12 @@ pub async fn batch_submit_iot_data(
     let mut successful = 0;
     let mut failed = 0;
     
-    // Process each transaction
+    // Phase 1: Pre-validate and build transactions (can be done without blockchain lock)
+    use crate::blockchain::transaction::{TxOutput, TransactionType};
+    let timestamp = chrono::Utc::now().timestamp();
+    
+    let mut valid_transactions: Vec<(ExternalIoTDataRequest, Transaction, u64)> = Vec::new();
+    
     for item in &body.transactions {
         // Validate category
         if !valid_categories.contains(&item.category.as_str()) {
@@ -620,7 +625,6 @@ pub async fn batch_submit_iot_data(
         
         // Build full data payload
         let (lat, lng) = item.location.map(|l| (l[0], l[1])).unwrap_or((0.0, 0.0));
-        let timestamp = chrono::Utc::now().timestamp();
         
         let full_data = format!(
             r#"{{"device":"{}","category":"{}","telemetry":{},"lat":{},"lng":{},"ts":{},"source":"batch"}}"#,
@@ -639,9 +643,6 @@ pub async fn batch_submit_iot_data(
         };
         let reward = base_reward + category_bonus;
         
-        // Create transaction
-        use crate::blockchain::transaction::{TxOutput, TransactionType};
-        
         let output = TxOutput {
             amount: reward,
             recipient: item.device_id.clone(),
@@ -658,26 +659,40 @@ pub async fn batch_submit_iot_data(
             21000,
         );
         
-        // Add to blockchain
+        valid_transactions.push((item.clone(), tx, reward));
+    }
+    
+    // Phase 2: Use parallel batch validation if we have valid transactions
+    if !valid_transactions.is_empty() {
+        let txs: Vec<Transaction> = valid_transactions.iter().map(|(_, tx, _)| tx.clone()).collect();
+        let rewards: Vec<(String, u64)> = valid_transactions.iter()
+            .map(|(item, _, reward)| (item.device_id.clone(), *reward))
+            .collect();
+        
+        // Use parallel batch processing
         let mut blockchain = data.blockchain.write().await;
-        match blockchain.add_transaction(tx) {
-            Ok(hash) => {
+        let (batch_success, batch_failed, successful_hashes) = blockchain.add_transactions_batch(txs);
+        
+        // Build results from batch processing
+        let hash_set: std::collections::HashSet<String> = successful_hashes.into_iter().collect();
+        
+        for (item, tx, reward) in valid_transactions {
+            if hash_set.contains(&tx.hash) {
                 results.push(BatchItemResult {
                     device_id: item.device_id.clone(),
                     success: true,
-                    tx_hash: Some(hash),
+                    tx_hash: Some(tx.hash),
                     reward: Some(reward),
                     error: None,
                 });
                 successful += 1;
-            }
-            Err(e) => {
+            } else {
                 results.push(BatchItemResult {
                     device_id: item.device_id.clone(),
                     success: false,
                     tx_hash: None,
                     reward: None,
-                    error: Some(e),
+                    error: Some("Transaction validation failed".to_string()),
                 });
                 failed += 1;
             }

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use log::{info, error};
+use log::{info, error, warn};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use rayon::prelude::*;
 
 use crate::blockchain::block::Block;
 use crate::blockchain::transaction::{Transaction, TransactionType};
@@ -499,6 +500,78 @@ impl Blockchain {
         info!("Transaction {} added to pending pool (type: {:?})", &tx_hash[..8], tx_type);
         
         Ok(tx_hash)
+    }
+    
+    /// Validate a single transaction (pure function for parallel processing)
+    fn validate_transaction_pure(&self, tx: &Transaction) -> Result<(), String> {
+        // Validate transaction hash
+        if !tx.verify_hash() {
+            return Err(format!("Invalid transaction hash: {}", &tx.hash[..8.min(tx.hash.len())]));
+        }
+        
+        // Apply validation rules based on transaction type
+        match tx.tx_type {
+            TransactionType::Transfer => {
+                let sender_balance = self.get_balance(&tx.sender);
+                let required = tx.total_output();
+                if sender_balance < required {
+                    return Err(format!("Insufficient balance: has {}, needs {}", sender_balance, required));
+                }
+            },
+            TransactionType::DataPurchase => {
+                let sender_balance = self.get_balance(&tx.sender);
+                if sender_balance < tx.total_output() {
+                    return Err("Insufficient balance".to_string());
+                }
+            },
+            // DataContribution, ContractDeploy, ContractCall, etc. - no balance check needed
+            _ => {}
+        }
+        
+        Ok(())
+    }
+    
+    /// Add multiple transactions in parallel (high-performance batch processing)
+    /// Returns (successful_count, failed_count, successful_hashes)
+    pub fn add_transactions_batch(&mut self, txs: Vec<Transaction>) -> (usize, usize, Vec<String>) {
+        let batch_size = txs.len();
+        
+        if batch_size == 0 {
+            return (0, 0, Vec::new());
+        }
+        
+        // Phase 1: Parallel validation (CPU-intensive hash verification)
+        let validation_results: Vec<(Transaction, Result<(), String>)> = txs
+            .into_par_iter()
+            .map(|tx| {
+                let result = self.validate_transaction_pure(&tx);
+                (tx, result)
+            })
+            .collect();
+        
+        // Phase 2: Sequential insertion (requires mutable access to pending_transactions)
+        let mut successful_count = 0;
+        let mut failed_count = 0;
+        let mut successful_hashes = Vec::new();
+        
+        for (tx, result) in validation_results {
+            match result {
+                Ok(()) => {
+                    successful_hashes.push(tx.hash.clone());
+                    self.pending_transactions.push(tx);
+                    successful_count += 1;
+                },
+                Err(e) => {
+                    warn!("Batch tx validation failed: {}", e);
+                    failed_count += 1;
+                }
+            }
+        }
+        
+        info!("Batch processed: {}/{} transactions added to pending pool (parallel validation)", 
+              successful_count, batch_size);
+        
+        (successful_count, failed_count, successful_hashes)
     }
     
     /// Mine a new block with pending transactions

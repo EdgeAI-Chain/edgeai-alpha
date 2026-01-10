@@ -44,6 +44,9 @@ rocksdb = "0.22"
 # Math for entropy calculation
 statrs = "0.17"
 
+# Parallel processing
+rayon = "1.10"
+
 [dev-dependencies]
 criterion = "0.5"
 

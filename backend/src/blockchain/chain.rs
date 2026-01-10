@@ -2,14 +2,17 @@ use std::collections::HashMap;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use log::{info, error};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use crate::blockchain::block::Block;
 use crate::blockchain::transaction::{Transaction, TransactionType};
 
 const DATA_DIR: &str = "/data";
-const CHAIN_FILE: &str = "chain.json";
+const BLOCKS_FILE: &str = "blocks.jsonl";  // JSON Lines format for append-only
+const STATE_FILE: &str = "state.json";     // Separate state file
+const MAX_BLOCKS_IN_MEMORY: usize = 100;   // Only keep recent blocks in RAM
 
 /// Account state in the blockchain
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,9 +59,21 @@ pub struct DataEntry {
     pub category: String,
 }
 
-/// The main blockchain structure
+/// Metadata for blockchain persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainMetadata {
+    pub total_blocks: u64,
+    pub difficulty: u64,
+    pub block_reward: u64,
+    pub data_reward_base: u64,
+    pub last_block_time: i64,
+}
+
+/// The main blockchain structure - optimized for memory efficiency
 #[derive(Serialize, Deserialize)]
 pub struct Blockchain {
+    /// Only keep recent blocks in memory for API queries
+    #[serde(skip)]
     pub chain: Vec<Block>,
     #[serde(skip)]
     pub pending_transactions: Vec<Transaction>,
@@ -67,6 +82,9 @@ pub struct Blockchain {
     pub block_reward: u64,
     pub data_reward_base: u64,
     pub last_block_time: i64,
+    /// Total number of blocks (including those on disk)
+    #[serde(default)]
+    pub total_blocks: u64,
 }
 
 impl Blockchain {
@@ -74,7 +92,8 @@ impl Blockchain {
     pub fn new() -> Self {
         // Try to load from disk first
         if let Some(chain) = Self::load_from_disk() {
-            info!("Blockchain loaded from disk with {} blocks", chain.chain.len());
+            info!("Blockchain loaded from disk with {} total blocks ({} in memory)", 
+                  chain.total_blocks, chain.chain.len());
             return chain;
         }
 
@@ -93,7 +112,6 @@ impl Blockchain {
         });
         
         // Initialize simulated IoT device accounts with 100 EDGE each
-        // This enables realistic Transfer and DataPurchase transactions
         let simulated_devices = [
             "edge_node_001", "edge_node_002", "edge_node_003",
             "edge_node_004", "edge_node_005", "edge_node_006",
@@ -106,7 +124,7 @@ impl Blockchain {
         for device in simulated_devices.iter() {
             accounts.insert(device.to_string(), Account {
                 address: device.to_string(),
-                balance: 100,  // 100 EDGE initial balance
+                balance: 100,
                 nonce: 0,
                 data_contributions: 0,
                 reputation_score: 50.0,
@@ -124,100 +142,258 @@ impl Blockchain {
         
         info!("Blockchain initialized with genesis block");
         
-        let chain = Blockchain {
-            chain: vec![genesis],
+        let mut chain = Blockchain {
+            chain: vec![genesis.clone()],
             pending_transactions: Vec::new(),
             state,
             difficulty: 2,
             block_reward: 100,
             data_reward_base: 50,
             last_block_time: Utc::now().timestamp(),
+            total_blocks: 1,
         };
 
         // Save initial state
-        chain.save_to_disk();
+        chain.append_block_to_disk(&genesis);
+        chain.save_state_to_disk();
         chain
     }
 
-    /// Load blockchain from disk
+    /// Load blockchain from disk - memory efficient version
     fn load_from_disk() -> Option<Self> {
-        let chain_path = Path::new(DATA_DIR).join(CHAIN_FILE);
+        let state_path = Path::new(DATA_DIR).join(STATE_FILE);
+        let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
         
-        if !chain_path.exists() {
-            return None;
+        // Try new format first
+        if state_path.exists() && blocks_path.exists() {
+            return Self::load_new_format();
         }
-
-        match fs::read_to_string(&chain_path) {
-            Ok(data) => {
-                match serde_json::from_str::<Blockchain>(&data) {
-                    Ok(mut chain) => {
-                        // Re-initialize pending transactions as empty since they are skipped in serialization
-                        chain.pending_transactions = Vec::new();
-                        
-                        // Ensure simulated device accounts exist with minimum balance
-                        let simulated_devices = [
-                            "edge_node_001", "edge_node_002", "edge_node_003",
-                            "edge_node_004", "edge_node_005", "edge_node_006",
-                            "edge_node_007", "edge_node_008", "edge_node_009",
-                            "edge_node_010", "factory_hub_a", "factory_hub_b",
-                            "city_gateway", "agri_node_1", "med_device_1",
-                            "power_grid_01", "transit_hub", "warehouse_sys",
-                        ];
-                        
-                        let mut initialized_count = 0;
-                        for device in simulated_devices.iter() {
-                            if !chain.state.accounts.contains_key(*device) {
-                                chain.state.accounts.insert(device.to_string(), Account {
-                                    address: device.to_string(),
-                                    balance: 100,  // 100 EDGE initial balance
-                                    nonce: 0,
-                                    data_contributions: 0,
-                                    reputation_score: 50.0,
-                                    staked_amount: 0,
-                                });
-                                initialized_count += 1;
-                            }
-                        }
-                        if initialized_count > 0 {
-                            info!("Initialized {} missing device accounts with 100 EDGE", initialized_count);
-                        }
-                        
-                        Some(chain)
-                    },
-                    Err(e) => {
-                        error!("Failed to parse blockchain data: {}", e);
-                        None
-                    }
+        
+        // Fall back to legacy format
+        let legacy_path = Path::new(DATA_DIR).join("chain.json");
+        if legacy_path.exists() {
+            info!("Migrating from legacy chain.json format...");
+            return Self::load_and_migrate_legacy();
+        }
+        
+        None
+    }
+    
+    /// Load from new optimized format
+    fn load_new_format() -> Option<Self> {
+        let state_path = Path::new(DATA_DIR).join(STATE_FILE);
+        let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
+        
+        // Load state
+        let state_data = fs::read_to_string(&state_path).ok()?;
+        let (state, metadata): (ChainState, ChainMetadata) = serde_json::from_str(&state_data).ok()?;
+        
+        // Load only the last N blocks into memory
+        let recent_blocks = Self::load_recent_blocks(&blocks_path, MAX_BLOCKS_IN_MEMORY)?;
+        
+        let mut chain = Blockchain {
+            chain: recent_blocks,
+            pending_transactions: Vec::new(),
+            state,
+            difficulty: metadata.difficulty,
+            block_reward: metadata.block_reward,
+            data_reward_base: metadata.data_reward_base,
+            last_block_time: metadata.last_block_time,
+            total_blocks: metadata.total_blocks,
+        };
+        
+        // Ensure simulated device accounts exist
+        chain.ensure_device_accounts();
+        
+        Some(chain)
+    }
+    
+    /// Load recent blocks from JSONL file
+    fn load_recent_blocks(path: &Path, count: usize) -> Option<Vec<Block>> {
+        let file = fs::File::open(path).ok()?;
+        let reader = BufReader::new(file);
+        
+        // Read all lines and keep only the last N
+        let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+        let start = if lines.len() > count { lines.len() - count } else { 0 };
+        
+        let blocks: Vec<Block> = lines[start..]
+            .iter()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        
+        if blocks.is_empty() {
+            None
+        } else {
+            Some(blocks)
+        }
+    }
+    
+    /// Load and migrate from legacy format
+    fn load_and_migrate_legacy() -> Option<Self> {
+        let legacy_path = Path::new(DATA_DIR).join("chain.json");
+        let data = fs::read_to_string(&legacy_path).ok()?;
+        
+        #[derive(Deserialize)]
+        struct LegacyBlockchain {
+            chain: Vec<Block>,
+            state: ChainState,
+            difficulty: u64,
+            block_reward: u64,
+            data_reward_base: u64,
+            last_block_time: i64,
+        }
+        
+        let legacy: LegacyBlockchain = serde_json::from_str(&data).ok()?;
+        let total_blocks = legacy.chain.len() as u64;
+        
+        // Write all blocks to new format
+        let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&blocks_path) 
+        {
+            for block in &legacy.chain {
+                if let Ok(json) = serde_json::to_string(block) {
+                    let _ = writeln!(file, "{}", json);
                 }
-            },
-            Err(e) => {
-                error!("Failed to read blockchain file: {}", e);
-                None
             }
+        }
+        
+        // Keep only recent blocks in memory
+        let recent_start = if legacy.chain.len() > MAX_BLOCKS_IN_MEMORY {
+            legacy.chain.len() - MAX_BLOCKS_IN_MEMORY
+        } else {
+            0
+        };
+        let recent_blocks: Vec<Block> = legacy.chain[recent_start..].to_vec();
+        
+        let mut chain = Blockchain {
+            chain: recent_blocks,
+            pending_transactions: Vec::new(),
+            state: legacy.state,
+            difficulty: legacy.difficulty,
+            block_reward: legacy.block_reward,
+            data_reward_base: legacy.data_reward_base,
+            last_block_time: legacy.last_block_time,
+            total_blocks,
+        };
+        
+        // Save state in new format
+        chain.save_state_to_disk();
+        
+        // Remove legacy file
+        let _ = fs::remove_file(&legacy_path);
+        info!("Migration complete: {} blocks migrated to new format", total_blocks);
+        
+        chain.ensure_device_accounts();
+        Some(chain)
+    }
+    
+    /// Ensure simulated device accounts exist
+    fn ensure_device_accounts(&mut self) {
+        let simulated_devices = [
+            "edge_node_001", "edge_node_002", "edge_node_003",
+            "edge_node_004", "edge_node_005", "edge_node_006",
+            "edge_node_007", "edge_node_008", "edge_node_009",
+            "edge_node_010", "factory_hub_a", "factory_hub_b",
+            "city_gateway", "agri_node_1", "med_device_1",
+            "power_grid_01", "transit_hub", "warehouse_sys",
+        ];
+        
+        let mut initialized_count = 0;
+        for device in simulated_devices.iter() {
+            if !self.state.accounts.contains_key(*device) {
+                self.state.accounts.insert(device.to_string(), Account {
+                    address: device.to_string(),
+                    balance: 100,
+                    nonce: 0,
+                    data_contributions: 0,
+                    reputation_score: 50.0,
+                    staked_amount: 0,
+                });
+                initialized_count += 1;
+            }
+        }
+        if initialized_count > 0 {
+            info!("Initialized {} missing device accounts with 100 EDGE", initialized_count);
         }
     }
 
-    /// Save blockchain to disk
-    pub fn save_to_disk(&self) {
-        // Ensure data directory exists
+    /// Append a single block to disk (memory efficient)
+    fn append_block_to_disk(&self, block: &Block) {
         if let Err(e) = fs::create_dir_all(DATA_DIR) {
             error!("Failed to create data directory: {}", e);
             return;
         }
 
-        let chain_path = Path::new(DATA_DIR).join(CHAIN_FILE);
+        let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
         
-        match serde_json::to_string_pretty(self) {
-            Ok(data) => {
-                if let Err(e) = fs::write(&chain_path, data) {
-                    error!("Failed to write blockchain to disk: {}", e);
-                } else {
-                    // info!("Blockchain saved to disk");
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&blocks_path) 
+        {
+            Ok(mut file) => {
+                match serde_json::to_string(block) {
+                    Ok(json) => {
+                        if let Err(e) = writeln!(file, "{}", json) {
+                            error!("Failed to append block to disk: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to serialize block: {}", e);
+                    }
                 }
             },
             Err(e) => {
-                error!("Failed to serialize blockchain: {}", e);
+                error!("Failed to open blocks file: {}", e);
             }
+        }
+    }
+    
+    /// Save state to disk (separate from blocks)
+    fn save_state_to_disk(&self) {
+        if let Err(e) = fs::create_dir_all(DATA_DIR) {
+            error!("Failed to create data directory: {}", e);
+            return;
+        }
+
+        let state_path = Path::new(DATA_DIR).join(STATE_FILE);
+        
+        let metadata = ChainMetadata {
+            total_blocks: self.total_blocks,
+            difficulty: self.difficulty,
+            block_reward: self.block_reward,
+            data_reward_base: self.data_reward_base,
+            last_block_time: self.last_block_time,
+        };
+        
+        match serde_json::to_string(&(&self.state, &metadata)) {
+            Ok(data) => {
+                if let Err(e) = fs::write(&state_path, data) {
+                    error!("Failed to write state to disk: {}", e);
+                }
+            },
+            Err(e) => {
+                error!("Failed to serialize state: {}", e);
+            }
+        }
+    }
+
+    /// Legacy save_to_disk for compatibility - now uses optimized storage
+    pub fn save_to_disk(&self) {
+        self.save_state_to_disk();
+    }
+    
+    /// Prune old blocks from memory to prevent OOM
+    fn prune_memory(&mut self) {
+        if self.chain.len() > MAX_BLOCKS_IN_MEMORY {
+            let excess = self.chain.len() - MAX_BLOCKS_IN_MEMORY;
+            self.chain.drain(0..excess);
+            info!("Pruned {} old blocks from memory, {} blocks remain", excess, self.chain.len());
         }
     }
     
@@ -226,9 +402,40 @@ impl Blockchain {
         self.chain.last().unwrap()
     }
     
-    /// Get block by index
+    /// Get block by index - may need to load from disk for old blocks
     pub fn get_block(&self, index: u64) -> Option<&Block> {
-        self.chain.get(index as usize)
+        // Check if block is in memory
+        if let Some(first_in_memory) = self.chain.first() {
+            if index >= first_in_memory.index {
+                let offset = (index - first_in_memory.index) as usize;
+                return self.chain.get(offset);
+            }
+        }
+        // Block is not in memory - would need disk access
+        // For now, return None for old blocks
+        None
+    }
+    
+    /// Get block by index with disk fallback
+    pub fn get_block_with_disk_fallback(&self, index: u64) -> Option<Block> {
+        // Check memory first
+        if let Some(block) = self.get_block(index) {
+            return Some(block.clone());
+        }
+        
+        // Load from disk
+        let blocks_path = Path::new(DATA_DIR).join(BLOCKS_FILE);
+        if let Ok(file) = fs::File::open(&blocks_path) {
+            let reader = BufReader::new(file);
+            for (i, line) in reader.lines().enumerate() {
+                if i as u64 == index {
+                    if let Ok(line) = line {
+                        return serde_json::from_str(&line).ok();
+                    }
+                }
+            }
+        }
+        None
     }
     
     /// Get block by hash
@@ -243,7 +450,7 @@ impl Blockchain {
             return Some(tx.clone());
         }
         
-        // Search in blocks
+        // Search in blocks (only in-memory blocks)
         for block in self.chain.iter().rev() {
             if let Some(tx) = block.transactions.iter().find(|tx| tx.hash == hash) {
                 return Some(tx.clone());
@@ -261,12 +468,8 @@ impl Blockchain {
             return Err("Invalid transaction hash".to_string());
         }
         
-        // Skip signature verification for unsigned transactions (simulated IoT devices)
-        // Real transactions from wallets will have signatures and will be verified
-        
         // Apply validation rules based on transaction type
         match tx.tx_type {
-            // Transfer requires balance check
             TransactionType::Transfer => {
                 let sender_balance = self.get_balance(&tx.sender);
                 let required = tx.total_output();
@@ -275,24 +478,18 @@ impl Blockchain {
                     return Err(format!("Insufficient balance: has {}, needs {}", sender_balance, required));
                 }
             },
-            // DataContribution: IoT devices contribute data and receive rewards
-            // No balance check needed - devices earn tokens by contributing data (PoIE)
             TransactionType::DataContribution => {
-                // Future: Add data quality validation, device signature verification, etc.
+                // Future: Add data quality validation
             },
-            // DataPurchase requires balance check
             TransactionType::DataPurchase => {
                 let sender_balance = self.get_balance(&tx.sender);
                 if sender_balance < tx.total_output() {
                     return Err("Insufficient balance".to_string());
                 }
             },
-            // Contract operations may require balance for gas fees
             TransactionType::ContractDeploy | TransactionType::ContractCall => {
                 // For now, allow contract operations without balance check
-                // Future: Implement gas fee mechanism
             },
-            // Genesis and Reward transactions are system-generated
             _ => {}
         }
         
@@ -306,17 +503,12 @@ impl Blockchain {
     
     /// Mine a new block with pending transactions
     pub fn mine_block(&mut self, validator: String) -> Result<Block, String> {
-        // Allow empty blocks to keep chain alive
-        // if self.pending_transactions.is_empty() {
-        //     return Err("No pending transactions".to_string());
-        // }
-        
         let previous_hash = self.latest_block().hash.clone();
-        let index = self.chain.len() as u64;
+        let index = self.total_blocks;  // Use total_blocks instead of chain.len()
         
-        // Select transactions for the block (max 100)
+        // Select transactions for the block (max 150 for Phase 1)
         let transactions: Vec<Transaction> = self.pending_transactions
-            .drain(..self.pending_transactions.len().min(100))
+            .drain(..self.pending_transactions.len().min(150))
             .collect();
         
         // Create block reward transaction
@@ -330,20 +522,14 @@ impl Blockchain {
         block_txs.extend(transactions);
         
         // Calculate PoIE adjusted difficulty
-        // Higher entropy (more IoT data) -> Lower difficulty
-        // We keep difficulty LOW and FIXED to ensure consistent block times
-        // PoIE now serves as a "bonus" to make mining even faster/cheaper for good data
         let data_entropy = Block::calculate_data_entropy(&block_txs);
         let entropy_bonus = (data_entropy * 0.5) as u64; 
-        
-        // Base difficulty is fixed at 2 to ensure fast mining
-        // The block time is controlled by the interval in main.rs, not by mining difficulty
         let base_difficulty = 2;
         
         let adjusted_difficulty = if base_difficulty > entropy_bonus {
             base_difficulty - entropy_bonus
         } else {
-            1 // Minimum difficulty
+            1
         };
 
         info!("Mining block {} with PoIE difficulty: {} (Base: {}, Entropy Bonus: {})", 
@@ -360,19 +546,28 @@ impl Blockchain {
         
         block.mine(adjusted_difficulty);
         
-        // No dynamic difficulty adjustment - we want fixed block times controlled by the scheduler
         self.last_block_time = Utc::now().timestamp();
         
         // Apply block to state
         self.apply_block(&block)?;
         
-        // Add block to chain
+        // Add block to in-memory chain
         self.chain.push(block.clone());
+        self.total_blocks += 1;
         
-        info!("Block {} mined by {}", index, &validator[..8.min(validator.len())]);
+        info!("Block {} mined by {} ({} blocks in memory)", 
+              index, &validator[..8.min(validator.len())], self.chain.len());
         
-        // Save to disk after every block
-        self.save_to_disk();
+        // Append only this block to disk (memory efficient!)
+        self.append_block_to_disk(&block);
+        
+        // Save state periodically (every 10 blocks to reduce I/O)
+        if self.total_blocks % 10 == 0 {
+            self.save_state_to_disk();
+        }
+        
+        // Prune old blocks from memory to prevent OOM
+        self.prune_memory();
         
         Ok(block)
     }
@@ -380,9 +575,6 @@ impl Blockchain {
     /// Apply block transactions to state
     fn apply_block(&mut self, block: &Block) -> Result<(), String> {
         for tx in &block.transactions {
-            // Skip failed transactions instead of failing the entire block
-            // This is important for DataPurchase transactions that may reference
-            // data not yet in the registry
             if let Err(e) = self.apply_transaction(tx) {
                 log::warn!("Transaction {} failed to apply: {} (skipping)", &tx.hash[..8], e);
                 continue;
@@ -404,16 +596,13 @@ impl Blockchain {
                 self.process_data_purchase(tx)?;
             }
             TransactionType::Reward => {
-                self.add_balance(&tx.outputs[0].recipient, tx.outputs[0].amount);
+                self.process_reward(tx)?;
             }
             TransactionType::Stake => {
                 self.process_stake(tx)?;
             }
             TransactionType::Unstake => {
                 self.process_unstake(tx)?;
-            }
-            TransactionType::Genesis => {
-                // Already handled in initialization
             }
             _ => {}
         }
@@ -422,83 +611,98 @@ impl Blockchain {
     
     /// Transfer tokens between accounts
     fn transfer(&mut self, from: &str, to: &str, amount: u64) -> Result<(), String> {
-        let sender = self.state.accounts.get_mut(from)
-            .ok_or("Sender account not found")?;
+        // Get or create sender account
+        let sender = self.state.accounts.entry(from.to_string())
+            .or_insert_with(|| Account::new(from.to_string()));
         
         if sender.balance < amount {
             return Err("Insufficient balance".to_string());
         }
-        
         sender.balance -= amount;
         sender.nonce += 1;
         
-        self.add_balance(to, amount);
+        // Get or create recipient account
+        let recipient = self.state.accounts.entry(to.to_string())
+            .or_insert_with(|| Account::new(to.to_string()));
+        recipient.balance += amount;
         
         Ok(())
     }
     
-    /// Add balance to an account (creates account if not exists)
-    fn add_balance(&mut self, address: &str, amount: u64) {
-        let account = self.state.accounts
-            .entry(address.to_string())
-            .or_insert_with(|| Account::new(address.to_string()));
-        account.balance += amount;
-    }
-    
     /// Process data contribution (PoIE reward)
     fn process_data_contribution(&mut self, tx: &Transaction) -> Result<(), String> {
-        let quality = tx.data_quality.as_ref()
-            .ok_or("Data quality not calculated")?;
+        let device = &tx.sender;
+        let reward = tx.outputs.get(0).map(|o| o.amount).unwrap_or(0);
         
-        let data_hash = tx.outputs[0].data_hash.as_ref()
-            .ok_or("Data hash not found")?;
+        // Get or create device account
+        let account = self.state.accounts.entry(device.to_string())
+            .or_insert_with(|| Account::new(device.to_string()));
         
-        // Calculate reward based on data quality (PoIE)
-        let reward = (self.data_reward_base as f64 * quality.overall_score) as u64;
+        account.balance += reward;
+        account.data_contributions += 1;
+        account.reputation_score = (account.reputation_score + 0.1).min(100.0);
         
-        // Add reward to contributor
-        self.add_balance(&tx.sender, reward);
-        
-        // Update contributor stats
-        if let Some(account) = self.state.accounts.get_mut(&tx.sender) {
-            account.data_contributions += 1;
-            account.reputation_score += quality.overall_score * 10.0;
+        // Register data if hash provided
+        if let Some(output) = tx.outputs.get(0) {
+            if let Some(data_hash) = &output.data_hash {
+                let quality = tx.data_quality.as_ref()
+                    .map(|q| q.overall_score)
+                    .unwrap_or(0.5);
+                
+                self.state.data_registry.insert(data_hash.clone(), DataEntry {
+                    hash: data_hash.clone(),
+                    owner: device.to_string(),
+                    price: 10,
+                    quality_score: quality,
+                    timestamp: Utc::now().timestamp(),
+                    purchases: 0,
+                    category: "IoT".to_string(),
+                });
+            }
         }
         
-        // Register data in marketplace
-        let entry = DataEntry {
-            hash: data_hash.clone(),
-            owner: tx.sender.clone(),
-            price: (quality.overall_score * 100.0) as u64,
-            quality_score: quality.overall_score,
-            timestamp: tx.timestamp.timestamp(),
-            purchases: 0,
-            category: "IoT".to_string(),
-        };
+        self.state.total_supply += reward;
         
-        self.state.data_registry.insert(data_hash.clone(), entry);
-        
+        Ok(())
+    }
+    
+    /// Process reward transaction
+    fn process_reward(&mut self, tx: &Transaction) -> Result<(), String> {
+        for output in &tx.outputs {
+            let account = self.state.accounts.entry(output.recipient.clone())
+                .or_insert_with(|| Account::new(output.recipient.clone()));
+            account.balance += output.amount;
+        }
+        self.state.total_supply += tx.total_output();
         Ok(())
     }
     
     /// Process data purchase
     fn process_data_purchase(&mut self, tx: &Transaction) -> Result<(), String> {
-        let data_hash = tx.outputs[0].data_hash.as_ref()
-            .ok_or("Data hash not found")?;
+        let buyer = &tx.sender;
+        let amount = tx.total_output();
         
-        // Extract needed data to avoid double borrow
-        let (owner, price) = {
-            let entry = self.state.data_registry.get(data_hash)
-                .ok_or("Data not found in registry")?;
-            (entry.owner.clone(), entry.price)
-        };
+        // Deduct from buyer
+        let buyer_account = self.state.accounts.get_mut(buyer)
+            .ok_or("Buyer account not found")?;
         
-        // Transfer payment
-        self.transfer(&tx.sender, &owner, price)?;
+        if buyer_account.balance < amount {
+            return Err("Insufficient balance".to_string());
+        }
+        buyer_account.balance -= amount;
         
-        // Update stats - re-borrow mutably
-        if let Some(entry) = self.state.data_registry.get_mut(data_hash) {
-            entry.purchases += 1;
+        // Pay seller
+        for output in &tx.outputs {
+            let seller_account = self.state.accounts.entry(output.recipient.clone())
+                .or_insert_with(|| Account::new(output.recipient.clone()));
+            seller_account.balance += output.amount;
+            
+            // Update data entry if exists
+            if let Some(data_hash) = &output.data_hash {
+                if let Some(entry) = self.state.data_registry.get_mut(data_hash) {
+                    entry.purchases += 1;
+                }
+            }
         }
         
         Ok(())
@@ -550,7 +754,7 @@ impl Blockchain {
         self.state.accounts.get(address).map(|a| a.balance).unwrap_or(0)
     }
     
-    /// Get transactions for an address
+    /// Get transactions for an address (only from in-memory blocks)
     pub fn get_transactions_for_address(&self, address: &str) -> Vec<&Transaction> {
         let mut txs = Vec::new();
         
@@ -575,48 +779,47 @@ impl Blockchain {
     
     /// Get blockchain stats with PoIE network metrics
     pub fn get_stats(&self) -> ChainStats {
-        let height = self.chain.len() as u64;
+        let height = self.total_blocks;
         let total_transactions: u64 = self.chain.iter().map(|b| b.transactions.len() as u64).sum();
         
-        // Calculate network entropy (sum of all block entropies)
+        // Estimate total transactions based on average
+        let avg_tx_per_block = if !self.chain.is_empty() {
+            total_transactions as f64 / self.chain.len() as f64
+        } else {
+            0.0
+        };
+        let estimated_total_tx = (avg_tx_per_block * height as f64) as u64;
+        
+        // Calculate network entropy from in-memory blocks
         let network_entropy: f64 = self.chain.iter()
             .map(|b| b.header.data_entropy)
             .sum();
         
-        // Calculate average transactions per block
-        let avg_tx_per_block = if height > 0 {
-            total_transactions as f64 / height as f64
-        } else {
-            0.0
-        };
-        
-        // Calculate data throughput (estimated bytes per second)
-        // Each transaction averages ~256 bytes, block time is 10s
+        // Calculate data throughput
         let data_throughput = if height > 0 {
-            (total_transactions as f64 * 256.0) / (height as f64 * 10.0)
+            (estimated_total_tx as f64 * 256.0) / (height as f64 * 10.0)
         } else {
             0.0
         };
         
-        // Calculate TPS (transactions per second)
+        // Calculate TPS
         let tps = if height > 0 {
-            total_transactions as f64 / (height as f64 * 10.0)
+            estimated_total_tx as f64 / (height as f64 * 10.0)
         } else {
             0.0
         };
         
         // Calculate validator power index
-        // Based on active accounts, data entries, and network entropy
         let validator_power = {
             let active = self.state.accounts.len() as f64;
             let data = self.state.data_registry.len() as f64;
-            let entropy_factor = network_entropy / (height.max(1) as f64);
+            let entropy_factor = network_entropy / (self.chain.len().max(1) as f64);
             (active * 0.3 + data * 0.3 + entropy_factor * 100.0 * 0.4).max(0.0)
         };
         
         ChainStats {
             height,
-            total_transactions,
+            total_transactions: estimated_total_tx,
             total_supply: self.state.total_supply,
             total_staked: self.state.total_staked,
             active_accounts: self.state.accounts.len() as u64,

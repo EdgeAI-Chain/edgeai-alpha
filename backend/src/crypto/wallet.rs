@@ -1,5 +1,9 @@
-// EdgeAI Blockchain - Wallet and Cryptographic Key Management
-// Implements Ed25519 key pairs for secure transaction signing
+//! EdgeAI Blockchain - Wallet and Cryptographic Key Management
+//!
+//! Implements Ed25519 key pairs for secure transaction signing.
+//! Provides wallet generation, key management, and signature verification.
+
+#![allow(dead_code)]
 
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;

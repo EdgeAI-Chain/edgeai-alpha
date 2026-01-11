@@ -1,8 +1,15 @@
+//! Device Registry module for EdgeAI Blockchain
+//!
+//! This module manages IoT device registration, reputation tracking,
+//! and contribution scoring for the PoIE 2.0 consensus mechanism.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use chrono::{DateTime, Utc};
-use log::{info, debug, warn};
+use log::{info, debug};
 
 /// Device type classification
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

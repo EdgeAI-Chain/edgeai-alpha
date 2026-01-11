@@ -1,10 +1,17 @@
+//! Device Registry API endpoints for EdgeAI Blockchain
+//!
+//! This module provides HTTP endpoints for IoT device registration,
+//! contribution tracking, and scarcity calculations.
+
+#![allow(dead_code)]
+
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::info;
 
-use crate::consensus::{DeviceRegistry, DeviceType, GeoRegion, Device, DeviceRegistryStats};
+use crate::consensus::{DeviceRegistry, DeviceType, GeoRegion, Device};
 use super::rest::ApiResponse;
 
 /// Device registry state (shared across handlers)

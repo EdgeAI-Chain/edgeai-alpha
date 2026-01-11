@@ -1,10 +1,16 @@
+//! Blockchain module for EdgeAI
+//!
+//! This module contains the core blockchain data structures including blocks,
+//! transactions, chain state management, mempool, and persistent storage.
+
 pub mod block;
 pub mod transaction;
 pub mod chain;
 pub mod mempool;
 pub mod storage;
 
+// Core blockchain exports - only export what's actually used externally
 pub use block::Block;
-pub use transaction::{Transaction, TransactionType, DataQuality, TxInput, TxOutput};
-pub use chain::{Blockchain, Account, ChainState, ChainStats, DataEntry};
+pub use transaction::{Transaction, TransactionType};
+pub use chain::Blockchain;
 pub use mempool::MempoolManager;

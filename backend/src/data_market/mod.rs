@@ -1,6 +1,9 @@
+//! Data Marketplace module for EdgeAI Blockchain
+//!
+//! This module provides a decentralized marketplace for data trading,
+//! including data listing, purchasing, and quality-based pricing.
+
 pub mod marketplace;
 
-pub use marketplace::{
-    DataMarketplace, DataListing, DataCategory, DataRating, 
-    PurchaseRecord, MarketplaceStats, SortBy,
-};
+// Core marketplace exports - only export what's actually used
+pub use marketplace::{DataMarketplace, DataListing, DataCategory, SortBy};

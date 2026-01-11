@@ -98,6 +98,7 @@ async fn main() -> std::io::Result<()> {
         max_peers: 50,
     };
     
+    #[allow(unused_mut)]
     let (p2p_command_tx, mut p2p_event_rx) = match start_p2p_network(p2p_config).await {
         Ok((tx, rx)) => {
             info!("libp2p P2P network started on port {}", p2p_port);

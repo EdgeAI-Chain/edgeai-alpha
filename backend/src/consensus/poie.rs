@@ -1,9 +1,16 @@
+//! Proof of Information Entropy (PoIE) Consensus Mechanism
+//!
+//! PoIE is a novel consensus mechanism designed for EdgeAI that rewards
+//! nodes based on the information entropy (value) of their data contributions.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use log::{info, debug};
 
-use crate::blockchain::{Block, Transaction, TransactionType, DataQuality};
+use crate::blockchain::{Block, Transaction, TransactionType};
 
 /// Proof of Information Entropy (PoIE) Consensus Mechanism
 /// 
@@ -86,7 +93,7 @@ impl PoIEConsensus {
     }
     
     /// Select the next block validator based on PoIE
-    pub fn select_validator(&self, block_entropy: f64, random_seed: &[u8]) -> Option<String> {
+    pub fn select_validator(&self, _block_entropy: f64, random_seed: &[u8]) -> Option<String> {
         let active_validators: Vec<&Validator> = self.validators
             .values()
             .filter(|v| v.is_active)

@@ -20,6 +20,8 @@
 //! - Logistics: 150 devices
 //! - Edge AI: 100 devices
 
+#![allow(dead_code)]
+
 use chrono::Utc;
 use crate::blockchain::transaction::{Transaction, TransactionType, TxOutput};
 

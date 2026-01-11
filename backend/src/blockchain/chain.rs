@@ -1,3 +1,10 @@
+//! Blockchain chain module for EdgeAI
+//!
+//! This module contains the core blockchain logic including chain state,
+//! block management, and transaction processing.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -160,7 +167,7 @@ impl Blockchain {
             }
         };
         
-        let mut chain = Blockchain {
+        let chain = Blockchain {
             chain: vec![genesis.clone()],
             pending_transactions: Vec::new(),
             storage,

@@ -665,13 +665,9 @@ pub async fn batch_submit_iot_data(
     // Phase 2: Use parallel batch validation if we have valid transactions
     if !valid_transactions.is_empty() {
         let txs: Vec<Transaction> = valid_transactions.iter().map(|(_, tx, _)| tx.clone()).collect();
-        let rewards: Vec<(String, u64)> = valid_transactions.iter()
-            .map(|(item, _, reward)| (item.device_id.clone(), *reward))
-            .collect();
-        
         // Use parallel batch processing
         let mut blockchain = data.blockchain.write().await;
-        let (batch_success, batch_failed, successful_hashes) = blockchain.add_transactions_batch(txs);
+        let (_batch_success, _batch_failed, successful_hashes) = blockchain.add_transactions_batch(txs);
         
         // Build results from batch processing
         let hash_set: std::collections::HashSet<String> = successful_hashes.into_iter().collect();

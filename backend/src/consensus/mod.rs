@@ -1,7 +1,14 @@
+//! Consensus module for EdgeAI Blockchain
+//! 
+//! This module contains the Proof of Information Entropy (PoIE) consensus mechanism,
+//! device registry for IoT device management, and data quality scoring algorithms.
+
 pub mod poie;
 pub mod device_registry;
 pub mod data_quality;
 
-pub use poie::{PoIEConsensus, Validator, ValidationResult, EntropyCalculator};
-pub use device_registry::{DeviceRegistry, Device, DeviceType, GeoRegion, DeviceRegistryStats};
-pub use data_quality::{DataQualityAnalyzer, QualityScore, QualityWeights, DataType};
+// Core consensus exports
+pub use poie::PoIEConsensus;
+
+// Device registry exports - used in main.rs and api/device.rs
+pub use device_registry::{DeviceRegistry, Device, DeviceType, GeoRegion};

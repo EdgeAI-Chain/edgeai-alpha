@@ -1,14 +1,23 @@
-use actix_web::{web, HttpResponse, Responder, HttpRequest};
-use actix_cors::Cors;
+//! REST API endpoints for EdgeAI Blockchain
+//!
+//! This module provides HTTP endpoints for blockchain operations, transactions,
+//! accounts, mining, consensus, marketplace, and network management.
+
+#![allow(dead_code)]
+
+use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{info, error};
+use log::info;
 
-use crate::blockchain::{Blockchain, Transaction, TransactionType, Block, ChainStats};
-use crate::consensus::{PoIEConsensus, Validator};
-use crate::data_market::{DataMarketplace, DataListing, DataCategory, MarketplaceStats, SortBy};
-use crate::network::{NetworkManager, NetworkStats};
+use crate::blockchain::{Blockchain, Transaction, Block};
+use crate::consensus::{PoIEConsensus};
+use crate::data_market::{DataMarketplace, DataListing, DataCategory, SortBy};
+use crate::network::NetworkManager;
+
+// Re-export Validator for use in handlers
+use crate::consensus::poie::Validator;
 
 /// Application state shared across handlers
 pub struct AppState {

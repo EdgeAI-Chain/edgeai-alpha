@@ -1,6 +1,14 @@
+//! Data Quality Scoring System for PoIE 2.0
+//!
+//! This module implements advanced data quality evaluation algorithms
+//! for assessing the value of contributed data in the EdgeAI network.
+//!
+//! NOTE: This module is prepared for future integration with the main
+//! consensus mechanism. Currently used for reference and testing.
+
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use log::{debug};
 
 /// Data Quality Scoring System for PoIE 2.0
 /// 
@@ -389,7 +397,7 @@ impl DataQualityAnalyzer {
     }
     
     /// Detect anomalies in the data
-    fn detect_anomalies(&self, data: &[u8], entropy: f64, data_type: &DataType) -> Vec<String> {
+    fn detect_anomalies(&self, data: &[u8], entropy: f64, _data_type: &DataType) -> Vec<String> {
         let mut anomalies = Vec::new();
         
         // Check for suspiciously low entropy

@@ -1,12 +1,9 @@
-// EdgeAI Blockchain - Cryptographic Module
-// Provides wallet management and signature verification
+//! Cryptographic module for EdgeAI Blockchain
+//!
+//! This module provides wallet management, key generation,
+//! and signature verification using ed25519 cryptography.
 
 pub mod wallet;
 
-pub use wallet::{
-    Wallet,
-    WalletExport,
-    WalletError,
-    verify_signature,
-    address_from_public_key,
-};
+// Core crypto exports - only export what's actually used
+pub use wallet::{Wallet, WalletError, verify_signature, address_from_public_key};

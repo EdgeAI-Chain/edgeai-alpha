@@ -1,8 +1,18 @@
+//! Smart Contract module for EdgeAI Blockchain
+//!
+//! This module defines smart contract structures and execution logic.
+//! Currently a placeholder for future WASM-based smart contract implementation.
+//!
+//! NOTE: This code is intentionally not integrated yet. It will be activated
+//! when the WASM runtime is implemented.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use chrono::{DateTime, Utc};
-use log::{info, debug, warn};
+use log::info;
 
 /// Smart contract types for EdgeAI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

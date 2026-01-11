@@ -1,3 +1,10 @@
+//! Transaction module for EdgeAI Blockchain
+//!
+//! This module defines transaction types, data quality metrics,
+//! and transaction processing logic.
+
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

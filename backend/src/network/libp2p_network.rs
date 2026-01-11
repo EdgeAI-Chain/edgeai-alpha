@@ -1,8 +1,10 @@
-//! EdgeAI libp2p Network Layer
+//! EdgeAI Blockchain - libp2p Network Layer
 //! 
 //! This module implements the P2P networking layer using libp2p,
 //! providing node discovery, gossip-based message propagation,
 //! and peer management.
+
+#![allow(dead_code)]
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

@@ -1,9 +1,19 @@
+//! P2P Networking module for EdgeAI Blockchain
+//!
+//! This module provides peer-to-peer networking capabilities including
+//! peer discovery, message propagation, and network management.
+//!
+//! NOTE: Some structures are prepared for future features and may not
+//! be fully integrated yet.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use log::{info, debug, warn, error};
+use log::{info, debug, warn};
 
 use crate::blockchain::{Block, Transaction};
 
@@ -265,7 +275,7 @@ impl NetworkManager {
     /// Handle incoming message
     pub async fn handle_message(&self, from_peer: &str, message: NetworkMessage) -> Option<NetworkMessage> {
         match message {
-            NetworkMessage::Handshake { node_id, node_type, version, block_height } => {
+            NetworkMessage::Handshake { node_id, node_type, version: _, block_height } => {
                 debug!("Handshake from {} (type: {:?}, height: {})", 
                     &node_id[..8], node_type, block_height);
                 

@@ -1,3 +1,10 @@
+//! Block module for EdgeAI Blockchain
+//!
+//! This module defines the Block structure and related operations
+//! for the EdgeAI blockchain.
+
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

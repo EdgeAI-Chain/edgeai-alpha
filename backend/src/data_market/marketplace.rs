@@ -1,7 +1,14 @@
+//! Data Marketplace module for EdgeAI Blockchain
+//!
+//! This module provides a decentralized marketplace for data trading,
+//! including data listing, purchasing, and quality-based pricing.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use log::{info, debug};
+use log::info;
 
 /// Data category for marketplace
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

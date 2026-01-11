@@ -1,3 +1,10 @@
+//! Validator Generator module for EdgeAI Blockchain
+//!
+//! This module generates simulated validator nodes for testing
+//! and demonstration purposes.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use crate::validators::types::{
     ValidatorNode, ValidatorStatus, ValidatorLocation, ValidatorStats,

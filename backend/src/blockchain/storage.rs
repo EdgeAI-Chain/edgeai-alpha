@@ -9,15 +9,16 @@
 //! - Atomic batch writes for consistency
 //! - Automatic data migration from legacy format
 
-use rocksdb::{DB, Options, WriteBatch, IteratorMode};
+#![allow(dead_code)]
+
+use rocksdb::{DB, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
-use log::{info, error, warn};
+use log::info;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::blockchain::block::Block;
 use crate::blockchain::transaction::Transaction;
-use super::chain::{Account, DataEntry, ChainMetadata, ChainState};
+use super::chain::{Account, DataEntry, ChainMetadata};
 
 /// Column family names for organizing data
 const CF_BLOCKS: &str = "blocks";           // block_index -> Block (serialized)

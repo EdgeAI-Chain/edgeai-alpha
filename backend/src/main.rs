@@ -19,11 +19,11 @@ use std::fs;
 use std::path::Path;
 
 use blockchain::{Blockchain, MempoolManager};
-use consensus::PoIEConsensus;
+use consensus::{PoIEConsensus, DeviceRegistry};
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
 use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
-use api::{AppState, configure_routes, configure_wallet_routes, configure_data_routes};
+use api::{AppState, DeviceState, configure_routes, configure_wallet_routes, configure_data_routes, configure_device_routes};
 
 const DATA_DIR: &str = "/data";
 
@@ -35,11 +35,11 @@ async fn main() -> std::io::Result<()> {
         .format_timestamp_secs()
         .init();
     
-   info!("============================================");
-    info!("   EdgeAI Blockchain Node v0.2.0");
+    info!("============================================");
+    info!("   EdgeAI Blockchain Node v0.3.0");
     info!("   The Most Intelligent Data Chain");
-    info!("   Now with libp2p P2P Networking!");
-    info!("===========================================");
+    info!("   PoIE 2.0 with Device Registry!");
+    info!("============================================");
     
     // Ensure data directory exists
     if !Path::new(DATA_DIR).exists() {
@@ -55,6 +55,10 @@ async fn main() -> std::io::Result<()> {
     // Initialize consensus
     let consensus = Arc::new(RwLock::new(PoIEConsensus::new()));
     info!("PoIE consensus engine initialized");
+    
+    // Initialize device registry (PoIE 2.0)
+    let device_registry = Arc::new(RwLock::new(DeviceRegistry::new()));
+    info!("Device Registry initialized (PoIE 2.0)");
     
     // Initialize marketplace
     let marketplace = Arc::new(RwLock::new(DataMarketplace::new()));
@@ -115,10 +119,16 @@ async fn main() -> std::io::Result<()> {
         marketplace: marketplace.clone(),
         network: network.clone(),
     });
+    
+    // Create device state (separate for modularity)
+    let device_state = web::Data::new(DeviceState {
+        registry: device_registry.clone(),
+    });
 
     // Start P2P event handler
     if let Some(mut event_rx) = p2p_event_rx {
         let p2p_blockchain = blockchain.clone();
+        let p2p_device_registry = device_registry.clone();
         tokio::spawn(async move {
             info!("P2P event handler started");
             while let Some(event) = event_rx.recv().await {
@@ -142,6 +152,14 @@ async fn main() -> std::io::Result<()> {
                     }
                     NetworkEvent::NewContribution(contrib) => {
                         info!("P2P: Received contribution from {}", &contrib.device_id[..8]);
+                        // Record contribution in device registry
+                        let mut registry = p2p_device_registry.write().await;
+                        if let Some(device) = registry.get_device_mut(&contrib.device_id) {
+                            // Calculate quality score from contribution
+                            let quality_score = 0.7; // Default quality, should be calculated
+                            let points = 10.0; // Base points
+                            device.record_contribution(quality_score, points);
+                        }
                     }
                     NetworkEvent::Ready => {
                         info!("P2P: Network ready");
@@ -155,6 +173,7 @@ async fn main() -> std::io::Result<()> {
     let mining_blockchain = blockchain.clone();
     let mining_validator = node_id.clone();
     let mining_p2p_tx = p2p_tx.clone();
+    let mining_device_registry = device_registry.clone();
     
     tokio::spawn(async move {
         info!("Block producer started");
@@ -165,6 +184,15 @@ async fn main() -> std::io::Result<()> {
             
             let mut chain = mining_blockchain.write().await;
             let current_height = chain.chain.len() as u64;
+            
+            // Update device activity status every 100 blocks
+            if current_height % 100 == 0 {
+                let mut registry = mining_device_registry.write().await;
+                registry.update_activity_status(24); // 24 hours inactive threshold
+                let stats = registry.get_stats();
+                info!("Device Registry: {} total, {} active, {} regions", 
+                    stats.total_devices, stats.active_devices, stats.regions_covered);
+            }
             
             // Collect pending transactions from mempool
             let mut mempool = MempoolManager::with_block_context(current_height);
@@ -212,6 +240,7 @@ async fn main() -> std::io::Result<()> {
     let bind_address = "0.0.0.0:8080";
     info!("Starting HTTP server at http://{}", bind_address);
     info!("API endpoints available at http://{}/api/", bind_address);
+    info!("Device Registry API at http://{}/api/devices/", bind_address);
     info!("Block Explorer available at http://{}/", bind_address);
     
     // Start HTTP server
@@ -226,9 +255,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .wrap(middleware::Logger::default())
             .app_data(app_state.clone())
+            .app_data(device_state.clone())
             .configure(configure_routes)
             .configure(configure_wallet_routes)
             .configure(configure_data_routes)
+            .configure(configure_device_routes)
             .service(Files::new("/", "./static").index_file("index.html"))
     })
     .bind(bind_address)?

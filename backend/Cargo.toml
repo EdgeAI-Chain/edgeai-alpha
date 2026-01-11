@@ -48,7 +48,8 @@ statrs = "0.17"
 rayon = "1.10"
 
 # WASM Runtime for Smart Contracts
-wasmer = "4.2"
+# Use cranelift backend only for better Docker compatibility
+wasmer = { version = "4.2", default-features = false, features = ["cranelift", "std"] }
 
 # P2P Networking
 libp2p = { version = "0.54", features = ["tokio", "gossipsub", "mdns", "noise", "yamux", "tcp", "identify", "kad", "macros"] }

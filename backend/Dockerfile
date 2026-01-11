@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     clang \
     libclang-dev \
+    llvm \
+    lld \
     curl \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -23,6 +26,8 @@ COPY Cargo.toml ./
 COPY src ./src
 
 # Build release binary (this will generate Cargo.lock)
+# Use lld linker for better compatibility with wasmer
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 RUN cargo build --release
 
 # Stage 2: Runtime

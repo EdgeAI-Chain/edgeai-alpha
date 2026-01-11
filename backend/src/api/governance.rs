@@ -454,7 +454,7 @@ pub async fn get_proposal_votes(
 /// Configure governance routes
 pub fn configure_governance_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/governance")
+        web::scope("/api/governance")
             .route("/stats", web::get().to(get_governance_stats))
             .route("/proposals", web::get().to(get_proposals))
             .route("/proposals/active", web::get().to(get_active_proposals))

@@ -19,14 +19,15 @@ use std::fs;
 use std::path::Path;
 
 use blockchain::{Blockchain, MempoolManager};
-use consensus::{PoIEConsensus, DeviceRegistry, StakingManager, StakingConfig};
+use consensus::{PoIEConsensus, DeviceRegistry, StakingManager, StakingConfig, GovernanceManager, GovernanceConfig};
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
 use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
 use api::{
-    AppState, DeviceState, StakingState, ContractState,
+    AppState, DeviceState, StakingState, ContractState, GovernanceState,
     configure_routes, configure_wallet_routes, configure_data_routes, 
-    configure_device_routes, configure_staking_routes, configure_contract_routes
+    configure_device_routes, configure_staking_routes, configure_contract_routes,
+    configure_governance_routes
 };
 use contracts::WasmRuntime;
 
@@ -41,9 +42,9 @@ async fn main() -> std::io::Result<()> {
         .init();
     
     info!("============================================");
-    info!("   EdgeAI Blockchain Node v0.5.0");
+    info!("   EdgeAI Blockchain Node v0.6.0");
     info!("   The Most Intelligent Data Chain");
-    info!("   PoIE 2.0 + Staking + Smart Contracts!");
+    info!("   PoIE 2.0 + Staking + Contracts + DAO!");
     info!("============================================");
     
     // Ensure data directory exists
@@ -79,6 +80,19 @@ async fn main() -> std::io::Result<()> {
     };
     let staking_manager = Arc::new(RwLock::new(StakingManager::new(staking_config)));
     info!("Staking Manager initialized (Delegation + Slashing)");
+    
+    // Initialize governance manager with custom config
+    let governance_config = GovernanceConfig {
+        min_deposit: 10_000_000_000_000_000_000_000, // 10,000 EDGE
+        voting_period: 7 * 24 * 60 * 60,             // 7 days
+        quorum_percentage: 33,                       // 33% participation
+        pass_threshold: 50,                          // 50% yes votes
+        veto_threshold: 33,                          // 33% veto to reject
+        execution_delay: 2 * 24 * 60 * 60,           // 2 days
+        max_active_proposals: 10,
+    };
+    let governance_manager = Arc::new(RwLock::new(GovernanceManager::new(governance_config)));
+    info!("Governance Manager initialized (On-chain DAO)");
     
     // Initialize marketplace
     let marketplace = Arc::new(RwLock::new(DataMarketplace::new()));
@@ -159,6 +173,9 @@ async fn main() -> std::io::Result<()> {
     let contract_state = web::Data::new(ContractState {
         runtime: wasm_runtime.clone(),
     });
+    
+    // Create governance state
+    let governance_state: web::Data<GovernanceState> = web::Data::new(governance_manager.clone());
 
     // Start P2P event handler
     if let Some(mut event_rx) = p2p_event_rx {
@@ -210,6 +227,7 @@ async fn main() -> std::io::Result<()> {
     let mining_p2p_tx = p2p_tx.clone();
     let mining_device_registry = device_registry.clone();
     let mining_staking = staking_manager.clone();
+    let mining_governance = governance_manager.clone();
     
     tokio::spawn(async move {
         info!("Block producer started");
@@ -235,6 +253,10 @@ async fn main() -> std::io::Result<()> {
                 if !completed.is_empty() {
                     info!("Processed {} unbonding entries", completed.len());
                 }
+                
+                // Process expired governance deposits
+                let mut governance = mining_governance.write().await;
+                governance.process_expired_deposits();
             }
             
             // Distribute staking rewards every block
@@ -293,6 +315,7 @@ async fn main() -> std::io::Result<()> {
     info!("Device Registry API at http://{}/api/devices/", bind_address);
     info!("Staking API at http://{}/api/staking/", bind_address);
     info!("Smart Contracts API at http://{}/api/contracts/", bind_address);
+    info!("Governance API at http://{}/api/governance/", bind_address);
     info!("Block Explorer available at http://{}/", bind_address);
     
     // Start HTTP server
@@ -310,12 +333,14 @@ async fn main() -> std::io::Result<()> {
             .app_data(device_state.clone())
             .app_data(staking_state.clone())
             .app_data(contract_state.clone())
+            .app_data(governance_state.clone())
             .configure(configure_routes)
             .configure(configure_wallet_routes)
             .configure(configure_data_routes)
             .configure(configure_device_routes)
             .configure(configure_staking_routes)
             .configure(configure_contract_routes)
+            .configure(configure_governance_routes)
             .service(Files::new("/", "./static").index_file("index.html"))
     })
     .bind(bind_address)?

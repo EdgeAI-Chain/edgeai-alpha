@@ -1,7 +1,8 @@
 //! API module for EdgeAI Blockchain
 //! 
 //! This module provides RESTful API endpoints for blockchain operations,
-//! wallet management, data marketplace, device registry, staking, and smart contracts.
+//! wallet management, data marketplace, device registry, staking, smart contracts,
+//! and on-chain governance.
 
 pub mod rest;
 pub mod wallet;
@@ -9,6 +10,7 @@ pub mod data;
 pub mod device;
 pub mod staking;
 pub mod contracts;
+pub mod governance;
 
 // REST API exports
 pub use rest::{AppState, configure_routes};
@@ -19,3 +21,4 @@ pub use data::configure_data_routes;
 pub use device::{DeviceState, configure_device_routes};
 pub use staking::{StakingState, configure_staking_routes};
 pub use contracts::{ContractState, configure_contract_routes};
+pub use governance::{GovernanceState, configure_governance_routes};

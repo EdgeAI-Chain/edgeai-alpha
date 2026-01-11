@@ -1,19 +1,20 @@
 //! Smart Contracts module for EdgeAI Blockchain
 //!
-//! This module provides smart contract functionality including
-//! contract deployment, execution, and state management.
+//! This module provides smart contract functionality including:
+//! - Contract definitions and state management
+//! - WASM runtime for contract execution
+//! - Gas metering and resource control
 //!
-//! NOTE: This module is currently a placeholder for future WASM-based
-//! smart contract implementation. The structures are defined but not
-//! yet integrated into the main blockchain logic.
+//! NOTE: Smart contract execution is currently in development.
+//! The WASM runtime provides a secure sandbox for contract execution.
 
 pub mod smart_contract;
+pub mod wasm_runtime;
 
-// Smart contract exports are intentionally not re-exported here
-// as they are not yet integrated into the main system.
-// When the WASM runtime is implemented, uncomment the following:
-//
-// pub use smart_contract::{
-//     SmartContract, ContractType, ContractState, ContractManager,
-//     ExecutionContext, ExecutionResult, ContractLog,
-// };
+// Re-export commonly used types
+pub use smart_contract::{SmartContract, ContractType, ContractState};
+pub use wasm_runtime::{
+    WasmRuntime, WasmError, ExecutionContext, ExecutionResult,
+    ContractAbi, AbiFunction, AbiParam, AbiEvent, ContractInfo,
+    GasMeter, GasCosts,
+};

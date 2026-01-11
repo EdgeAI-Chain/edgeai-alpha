@@ -19,11 +19,16 @@ use std::fs;
 use std::path::Path;
 
 use blockchain::{Blockchain, MempoolManager};
-use consensus::{PoIEConsensus, DeviceRegistry};
+use consensus::{PoIEConsensus, DeviceRegistry, StakingManager, StakingConfig};
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
 use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
-use api::{AppState, DeviceState, configure_routes, configure_wallet_routes, configure_data_routes, configure_device_routes};
+use api::{
+    AppState, DeviceState, StakingState, ContractState,
+    configure_routes, configure_wallet_routes, configure_data_routes, 
+    configure_device_routes, configure_staking_routes, configure_contract_routes
+};
+use contracts::WasmRuntime;
 
 const DATA_DIR: &str = "/data";
 
@@ -36,9 +41,9 @@ async fn main() -> std::io::Result<()> {
         .init();
     
     info!("============================================");
-    info!("   EdgeAI Blockchain Node v0.3.0");
+    info!("   EdgeAI Blockchain Node v0.5.0");
     info!("   The Most Intelligent Data Chain");
-    info!("   PoIE 2.0 with Device Registry!");
+    info!("   PoIE 2.0 + Staking + Smart Contracts!");
     info!("============================================");
     
     // Ensure data directory exists
@@ -60,9 +65,28 @@ async fn main() -> std::io::Result<()> {
     let device_registry = Arc::new(RwLock::new(DeviceRegistry::new()));
     info!("Device Registry initialized (PoIE 2.0)");
     
+    // Initialize staking manager with custom config
+    let staking_config = StakingConfig {
+        min_validator_stake: 10_000,
+        min_delegation: 100,
+        unbonding_period: 7 * 24 * 60 * 60, // 7 days
+        max_validators: 100,
+        slash_double_sign: 0.05,  // 5%
+        slash_downtime: 0.01,     // 1%
+        min_uptime: 0.95,         // 95%
+        downtime_window: 1000,
+        commission_range: (0.0, 0.25), // 0-25%
+    };
+    let staking_manager = Arc::new(RwLock::new(StakingManager::new(staking_config)));
+    info!("Staking Manager initialized (Delegation + Slashing)");
+    
     // Initialize marketplace
     let marketplace = Arc::new(RwLock::new(DataMarketplace::new()));
     info!("Data marketplace initialized");
+    
+    // Initialize WASM runtime for smart contracts
+    let wasm_runtime = Arc::new(RwLock::new(WasmRuntime::new()));
+    info!("WASM Smart Contract Runtime initialized");
     
     // Initialize network
     let node_id = format!("node_{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
@@ -125,6 +149,16 @@ async fn main() -> std::io::Result<()> {
     let device_state = web::Data::new(DeviceState {
         registry: device_registry.clone(),
     });
+    
+    // Create staking state
+    let staking_state = web::Data::new(StakingState {
+        manager: staking_manager.clone(),
+    });
+    
+    // Create contract state
+    let contract_state = web::Data::new(ContractState {
+        runtime: wasm_runtime.clone(),
+    });
 
     // Start P2P event handler
     if let Some(mut event_rx) = p2p_event_rx {
@@ -175,6 +209,7 @@ async fn main() -> std::io::Result<()> {
     let mining_validator = node_id.clone();
     let mining_p2p_tx = p2p_tx.clone();
     let mining_device_registry = device_registry.clone();
+    let mining_staking = staking_manager.clone();
     
     tokio::spawn(async move {
         info!("Block producer started");
@@ -193,6 +228,20 @@ async fn main() -> std::io::Result<()> {
                 let stats = registry.get_stats();
                 info!("Device Registry: {} total, {} active, {} regions", 
                     stats.total_devices, stats.active_devices, stats.regions_covered);
+                
+                // Process unbonding queue
+                let mut staking = mining_staking.write().await;
+                let completed = staking.process_unbonding();
+                if !completed.is_empty() {
+                    info!("Processed {} unbonding entries", completed.len());
+                }
+            }
+            
+            // Distribute staking rewards every block
+            {
+                let mut staking = mining_staking.write().await;
+                let block_reward = 100; // Base block reward
+                staking.distribute_rewards(block_reward);
             }
             
             // Collect pending transactions from mempool
@@ -242,6 +291,8 @@ async fn main() -> std::io::Result<()> {
     info!("Starting HTTP server at http://{}", bind_address);
     info!("API endpoints available at http://{}/api/", bind_address);
     info!("Device Registry API at http://{}/api/devices/", bind_address);
+    info!("Staking API at http://{}/api/staking/", bind_address);
+    info!("Smart Contracts API at http://{}/api/contracts/", bind_address);
     info!("Block Explorer available at http://{}/", bind_address);
     
     // Start HTTP server
@@ -257,10 +308,14 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .app_data(app_state.clone())
             .app_data(device_state.clone())
+            .app_data(staking_state.clone())
+            .app_data(contract_state.clone())
             .configure(configure_routes)
             .configure(configure_wallet_routes)
             .configure(configure_data_routes)
             .configure(configure_device_routes)
+            .configure(configure_staking_routes)
+            .configure(configure_contract_routes)
             .service(Files::new("/", "./static").index_file("index.html"))
     })
     .bind(bind_address)?

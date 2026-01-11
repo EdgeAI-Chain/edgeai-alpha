@@ -446,7 +446,7 @@ impl DeviceRegistryContract {
         let mut device: serde_json::Value = serde_json::from_str(&device_str).unwrap();
         
         // Check ownership
-        if device["owner"].as_str() != Some(&ctx.caller) {
+        if device["owner"].as_str() != Some(ctx.caller.as_str()) {
             return ExecutionResult {
                 success: false,
                 return_value: None,

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::info;
-use wasmer::Value;
+use wasmtime::Val;
 
 use crate::contracts::{
     WasmRuntime, ExecutionContext, ContractAbi, AbiFunction, AbiParam,
@@ -186,19 +186,19 @@ pub async fn call_contract(
     req: web::Json<CallContractRequest>,
 ) -> impl Responder {
     // Convert JSON args to WASM values
-    let args: Vec<Value> = req.args.iter().map(|v| {
+    let args: Vec<Val> = req.args.iter().map(|v| {
         match v {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
-                    Value::I64(i)
+                    Val::I64(i)
                 } else if let Some(f) = n.as_f64() {
-                    Value::F64(f)
+                    Val::F64(f.to_bits())
                 } else {
-                    Value::I32(0)
+                    Val::I32(0)
                 }
             }
-            serde_json::Value::Bool(b) => Value::I32(if *b { 1 } else { 0 }),
-            _ => Value::I32(0),
+            serde_json::Value::Bool(b) => Val::I32(if *b { 1 } else { 0 }),
+            _ => Val::I32(0),
         }
     }).collect();
 
@@ -257,7 +257,7 @@ pub async fn get_contract(
                     name: contract.abi.name,
                     version: contract.abi.version,
                     functions: contract.abi.functions.iter().map(|f| f.name.clone()).collect(),
-                    compiled_at: contract.compiled_at.to_rfc3339(),
+                    compiled_at: contract.deployed_at.to_rfc3339(),
                 }),
                 error: None,
             })

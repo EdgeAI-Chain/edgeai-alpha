@@ -637,6 +637,8 @@ export interface PaginationParams {
   page?: number;
   /** Items per page */
   pageSize?: number;
+  /** Allow additional properties for API compatibility */
+  [key: string]: unknown;
 }
 
 // ============================================================================

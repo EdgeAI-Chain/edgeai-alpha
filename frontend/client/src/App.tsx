@@ -14,6 +14,7 @@ import Transactions from "@/pages/Transactions";
 import TransactionDetails from "@/pages/TransactionDetails";
 import Validators from "@/pages/Validators";
 import Staking from "@/pages/Staking";
+import Governance from "@/pages/Governance";
 import Marketplace from "@/pages/Marketplace";
 import DEX from "@/pages/DEX";
 import Wallet from "@/pages/Wallet";
@@ -30,6 +31,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     { path: "/transactions", label: "Transactions", icon: "fas fa-exchange-alt" },
     { path: "/validators", label: "Validators", icon: "fas fa-server" },
     { path: "/staking", label: "Staking", icon: "fas fa-coins" },
+    { path: "/governance", label: "Governance", icon: "fas fa-landmark" },
     { path: "/dex", label: "DEX", icon: "fas fa-chart-bar" },
     { path: "/marketplace", label: "Market Place", icon: "fas fa-store" },
     { path: "/wallet", label: "Wallet", icon: "fas fa-wallet" },
@@ -119,6 +121,7 @@ function App() {
           <Route path="/tx/:id" component={TransactionDetails} />
           <Route path="/validators" component={Validators} />
           <Route path="/staking" component={Staking} />
+          <Route path="/governance" component={Governance} />
           <Route path="/dex" component={DEX} />
           <Route path="/marketplace" component={Marketplace} />
           <Route path="/wallet" component={Wallet} />

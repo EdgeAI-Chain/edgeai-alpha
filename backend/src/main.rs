@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use actix_web::{web, App, HttpServer, middleware};
 use actix_cors::Cors;
+use actix_web::http::header;
 use actix_files::Files;
 use log::{info, LevelFilter};
 use env_logger::Builder;
@@ -320,10 +321,17 @@ async fn main() -> std::io::Result<()> {
     
     // Start HTTP server
     HttpServer::new(move || {
+        // CORS configuration - restrict to known origins for security
         let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
+            .allowed_origin("https://edgeai-alpha.vercel.app")
+            .allowed_origin("https://edgeai-chain.github.io")
+            .allowed_origin("http://localhost:3000")
+            .allowed_origin("http://localhost:5173")
+            .allowed_origin("http://127.0.0.1:3000")
+            .allowed_origin("http://127.0.0.1:5173")
+            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+            .allowed_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT])
+            .supports_credentials()
             .max_age(3600);
         
         App::new()

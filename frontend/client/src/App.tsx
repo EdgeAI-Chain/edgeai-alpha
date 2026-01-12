@@ -133,3 +133,4 @@ function App() {
 }
 
 export default App;
+// Trigger Vercel deployment - Mon Jan 12 00:41:30 EST 2026

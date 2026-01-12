@@ -76,3 +76,4 @@ VOLUME /data
 
 # Run the application
 CMD ["./edgeai-node"]
+# Trigger Docker build - Mon Jan 12 04:30:29 EST 2026

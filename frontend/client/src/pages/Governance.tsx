@@ -617,7 +617,7 @@ export default function Governance() {
         proposer: wallet.address,
         title: data.title,
         description: data.description,
-        proposal_type: { type: "text" },
+        proposal_type: { type: "text", content: data.content || data.description },
         initial_deposit: "10000000000000000000", // 10 EDGE
       };
       

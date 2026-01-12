@@ -4,6 +4,7 @@
 //! wallet management, data marketplace, device registry, staking, smart contracts,
 //! and on-chain governance.
 
+pub mod auth;
 pub mod rest;
 pub mod wallet;
 pub mod data;
@@ -11,6 +12,9 @@ pub mod device;
 pub mod staking;
 pub mod contracts;
 pub mod governance;
+
+// Authentication exports
+pub use auth::{SignedRequest, AuthData, verify_signed_request, create_sign_message};
 
 // REST API exports
 pub use rest::{AppState, configure_routes};

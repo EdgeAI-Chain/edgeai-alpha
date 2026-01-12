@@ -4,11 +4,12 @@
 
 #![allow(dead_code)]
 
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::api::auth::{SignedRequest, AuthData, verify_signed_request};
 use crate::consensus::governance::{
     GovernanceManager, GovernanceStats, Proposal, ProposalStatus, ProposalType,
     ValidatorAction, VoteOption, VoteTally,
@@ -21,7 +22,7 @@ pub type GovernanceState = Arc<RwLock<GovernanceManager>>;
 // Request/Response Types
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CreateProposalRequest {
     pub proposer: String,
     pub title: String,
@@ -30,7 +31,7 @@ pub struct CreateProposalRequest {
     pub initial_deposit: String, // Amount in smallest unit as string
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum ProposalTypeRequest {
     #[serde(rename = "parameter_change")]
@@ -137,7 +138,7 @@ pub struct DepositRequest {
     pub amount: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VoteRequest {
     pub voter: String,
     pub option: String, // "yes", "no", "abstain", "no_with_veto"
@@ -318,12 +319,27 @@ pub async fn get_proposal(
     }
 }
 
-/// Create a new proposal
+/// Create a new proposal (requires signature authentication)
+/// 
+/// Request body must be wrapped in SignedRequest with auth data
 pub async fn create_proposal(
     governance: web::Data<GovernanceState>,
-    body: web::Json<CreateProposalRequest>,
+    body: web::Json<SignedRequest<CreateProposalRequest>>,
 ) -> impl Responder {
+    // Verify signature - proposer must sign the request
+    let message = serde_json::to_vec(&body.data).unwrap_or_default();
+    match verify_signed_request(
+        &body.auth,
+        &message,
+        Some(&body.data.proposer),
+        300, // 5 minute expiry
+    ) {
+        Ok(_) => {},
+        Err(response) => return response,
+    };
+
     let mut gov = governance.write().await;
+    let body = &body.data;
 
     let initial_deposit: u128 = body.initial_deposit.parse().unwrap_or(0);
     let proposal_type: ProposalType = body.proposal_type.clone().into();
@@ -380,14 +396,29 @@ pub async fn add_deposit(
     }
 }
 
-/// Vote on a proposal
+/// Vote on a proposal (requires signature authentication)
+/// 
+/// Request body must be wrapped in SignedRequest with auth data
 pub async fn vote_on_proposal(
     governance: web::Data<GovernanceState>,
     path: web::Path<u64>,
-    body: web::Json<VoteRequest>,
+    body: web::Json<SignedRequest<VoteRequest>>,
 ) -> impl Responder {
+    // Verify signature - voter must sign the request
+    let message = serde_json::to_vec(&body.data).unwrap_or_default();
+    match verify_signed_request(
+        &body.auth,
+        &message,
+        Some(&body.data.voter),
+        300, // 5 minute expiry
+    ) {
+        Ok(_) => {},
+        Err(response) => return response,
+    };
+
     let proposal_id = path.into_inner();
     let mut gov = governance.write().await;
+    let body = &body.data;
 
     let option = match body.option.to_lowercase().as_str() {
         "yes" => VoteOption::Yes,

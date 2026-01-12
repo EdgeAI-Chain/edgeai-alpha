@@ -44,6 +44,7 @@ import {
   TrendingUp
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getOrCreateDemoWallet, createSignedRequest, Wallet } from "@/lib/crypto";
 
 // Types
 interface GovernanceStats {
@@ -553,22 +554,96 @@ export default function Governance() {
     return () => clearInterval(interval);
   }, []);
   
-  // Handle vote
+  // Get or create demo wallet
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  
+  useEffect(() => {
+    getOrCreateDemoWallet().then(setWallet);
+  }, []);
+  
+  // Handle vote with signature authentication
   const handleVote = async (proposalId: number, vote: string) => {
-    console.log(`Voting ${vote} on proposal ${proposalId}`);
-    // TODO: Implement actual voting
+    if (!wallet) {
+      console.error("No wallet available");
+      return;
+    }
+    
+    try {
+      const voteData = {
+        voter: wallet.address,
+        option: vote,
+        voting_power: "1000000000000000000", // 1 EDGE
+      };
+      
+      const signedRequest = await createSignedRequest(wallet, voteData);
+      
+      const response = await fetch(
+        `https://edgeai-blockchain-node.fly.dev/api/governance/proposals/${proposalId}/vote`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(signedRequest),
+        }
+      );
+      
+      const result = await response.json();
+      if (result.success) {
+        console.log("Vote cast successfully");
+        // Refresh proposals
+        window.location.reload();
+      } else {
+        console.error("Vote failed:", result.error);
+      }
+    } catch (error) {
+      console.error("Failed to vote:", error);
+    }
   };
   
   // Handle deposit
   const handleDeposit = async (proposalId: number, amount: string) => {
     console.log(`Depositing ${amount} on proposal ${proposalId}`);
-    // TODO: Implement actual deposit
+    // Deposit doesn't require signature authentication
   };
   
-  // Handle create proposal
+  // Handle create proposal with signature authentication
   const handleCreateProposal = async (data: any) => {
-    console.log("Creating proposal:", data);
-    // TODO: Implement actual proposal creation
+    if (!wallet) {
+      console.error("No wallet available");
+      return;
+    }
+    
+    try {
+      const proposalData = {
+        proposer: wallet.address,
+        title: data.title,
+        description: data.description,
+        proposal_type: { type: "text" },
+        initial_deposit: "10000000000000000000", // 10 EDGE
+      };
+      
+      const signedRequest = await createSignedRequest(wallet, proposalData);
+      
+      const response = await fetch(
+        "https://edgeai-blockchain-node.fly.dev/api/governance/proposals",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(signedRequest),
+        }
+      );
+      
+      const result = await response.json();
+      if (result.success) {
+        console.log("Proposal created:", result.proposal_id);
+        setCreateDialogOpen(false);
+        // Refresh proposals
+        window.location.reload();
+      } else {
+        console.error("Proposal creation failed:", result.error);
+      }
+    } catch (error) {
+      console.error("Failed to create proposal:", error);
+    }
   };
   
   // Filter proposals

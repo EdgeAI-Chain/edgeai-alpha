@@ -60,14 +60,23 @@ export default function Wallet() {
       const response = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/generate", {
         method: "POST"
       });
-      const data = await response.json();
+      const result = await response.json();
       
-      setWallet(data);
-      addLog("success", "Wallet generated successfully.");
-      addLog("output", `Address: ${data.address}`);
-      addLog("info", "⚠️ SAVE YOUR PRIVATE KEY! It cannot be recovered.");
-      
-      setActiveStep(2);
+      // API returns { success: true, data: { address, public_key, secret_key } }
+      if (result.success && result.data) {
+        const walletData = {
+          address: result.data.address,
+          public_key: result.data.public_key,
+          private_key: result.data.secret_key
+        };
+        setWallet(walletData);
+        addLog("success", "Wallet generated successfully.");
+        addLog("output", `Address: ${walletData.address}`);
+        addLog("info", "⚠️ SAVE YOUR PRIVATE KEY! It cannot be recovered.");
+        setActiveStep(2);
+      } else {
+        addLog("error", result.error || "Failed to generate wallet.");
+      }
     } catch (error) {
       addLog("error", "Failed to generate wallet. Network error?");
     } finally {
@@ -83,43 +92,49 @@ export default function Wallet() {
     
     try {
       const response = await fetch(`https://edgeai-blockchain-node.fly.dev/api/accounts/${wallet.address}/balance`);
-      const data = await response.json();
+      const result = await response.json();
       
-      setBalance(data.balance);
-      addLog("output", `Balance: ${data.balance} EDGE`);
+      // API returns { success: true, data: { address, balance } }
+      const currentBalance = result.data?.balance ?? result.balance ?? 0;
+      setBalance(currentBalance);
+      addLog("output", `Balance: ${currentBalance} EDGE`);
       
-      if (data.balance === 0) {
+      if (currentBalance === 0) {
         addLog("info", "Balance is 0. Requesting faucet funds...");
-        // Auto-fund for demo purposes
-        await fetch("https://edgeai-blockchain-node.fly.dev/api/transactions/transfer", {
+        
+        // Use the new faucet API
+        const faucetRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/faucet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            from: "genesis",
-            to: wallet.address,
+            address: wallet.address,
             amount: 1000
           })
         });
+        const faucetResult = await faucetRes.json();
         
-        // Mine a block to confirm
-        await fetch("https://edgeai-blockchain-node.fly.dev/api/mine", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ validator: "faucet_miner" })
-        });
-        
-        addLog("success", "Faucet transfer initiated and mined.");
-        
-        // Check balance again
-        const newBalanceRes = await fetch(`https://edgeai-blockchain-node.fly.dev/api/accounts/${wallet.address}/balance`);
-        const newBalanceData = await newBalanceRes.json();
-        setBalance(newBalanceData.balance);
-        addLog("output", `New Balance: ${newBalanceData.balance} EDGE`);
+        if (faucetResult.success) {
+          addLog("success", `Faucet sent ${faucetResult.data?.amount || 1000} EDGE!`);
+          addLog("output", `Transaction: ${faucetResult.data?.transaction_hash?.substring(0, 16)}...`);
+          
+          // Wait a moment for the transaction to be processed
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Check balance again
+          const newBalanceRes = await fetch(`https://edgeai-blockchain-node.fly.dev/api/accounts/${wallet.address}/balance`);
+          const newBalanceResult = await newBalanceRes.json();
+          const newBalance = newBalanceResult.data?.balance ?? newBalanceResult.balance ?? 0;
+          setBalance(newBalance);
+          addLog("output", `New Balance: ${newBalance} EDGE`);
+        } else {
+          addLog("error", faucetResult.error || "Faucet request failed.");
+        }
       }
       
       setActiveStep(3);
     } catch (error) {
       addLog("error", "Failed to check balance.");
+      console.error(error);
     } finally {
       setIsLoading(false);
     }
@@ -132,9 +147,9 @@ export default function Wallet() {
     addLog("input", `edgeai-cli transfer --to ${recipient} --amount ${amount} --sign`);
     
     try {
-      // 1. Prepare
+      // 1. Prepare - get the message to sign
       addLog("info", "Preparing transaction...");
-      const prepareRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/transfer/prepare", {
+      const prepareRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/prepare-transfer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -143,44 +158,52 @@ export default function Wallet() {
           amount: parseInt(amount)
         })
       });
-      const prepareData = await prepareRes.json();
-      addLog("output", `Message to sign: ${prepareData.message}`);
+      const prepareResult = await prepareRes.json();
+      const messageToSign = prepareResult.data?.message_to_sign || prepareResult.message_to_sign;
+      addLog("output", `Message to sign: ${messageToSign?.substring(0, 32)}...`);
       
-      // 2. Sign
+      // 2. Sign the message with private key
       addLog("info", "Signing with private key...");
       const signRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          private_key: wallet.private_key,
-          message: prepareData.message
+          secret_key: wallet.private_key,
+          message: messageToSign
         })
       });
-      const signData = await signRes.json();
-      addLog("output", `Signature: ${signData.signature.substring(0, 20)}...`);
+      const signResult = await signRes.json();
+      const signature = signResult.data?.signature || signResult.signature;
+      addLog("output", `Signature: ${signature?.substring(0, 20)}...`);
       
-      // 3. Submit
+      // 3. Submit the signed transaction
       addLog("info", "Submitting signed transaction...");
-      const submitRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/transfer/submit", {
+      const submitRes = await fetch("https://edgeai-blockchain-node.fly.dev/api/wallet/transfer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           from: wallet.address,
           to: recipient,
           amount: parseInt(amount),
-          signature: signData.signature,
+          signature: signature,
           public_key: wallet.public_key
         })
       });
       
-      if (!submitRes.ok) throw new Error("Transfer failed");
+      const submitResult = await submitRes.json();
       
-      const submitData = await submitRes.json();
-      addLog("success", `Transaction submitted! ID: ${submitData.transaction_id}`);
-      
-      setActiveStep(4);
+      if (submitResult.success) {
+        const txHash = submitResult.data || submitResult.transaction_id;
+        addLog("success", `Transaction submitted! Hash: ${txHash?.substring(0, 16)}...`);
+        toast.success("Transfer successful!");
+        setActiveStep(4);
+      } else {
+        addLog("error", submitResult.error || "Transfer failed.");
+        toast.error(submitResult.error || "Transfer failed");
+      }
     } catch (error) {
       addLog("error", "Transfer failed. Check console for details.");
+      toast.error("Transfer failed");
       console.error(error);
     } finally {
       setIsLoading(false);
@@ -198,15 +221,25 @@ export default function Wallet() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ validator: wallet?.address || "miner" })
       });
-      const data = await response.json();
+      const result = await response.json();
       
-      addLog("success", `Block #${data.index} mined successfully!`);
-      addLog("output", `Transactions: ${data.transactions.length}`);
-      addLog("output", `Hash: ${data.hash.substring(0, 20)}...`);
+      // API returns { success: true, data: { index, hash, transactions, ... } }
+      const blockData = result.data || result;
       
-      setActiveStep(5);
+      if (result.success || blockData.index !== undefined) {
+        addLog("success", `Block #${blockData.index} mined successfully!`);
+        addLog("output", `Transactions: ${blockData.transactions?.length || 0}`);
+        addLog("output", `Hash: ${blockData.hash?.substring(0, 20)}...`);
+        toast.success(`Block #${blockData.index} mined!`);
+        setActiveStep(5);
+      } else {
+        addLog("error", result.error || "Mining failed.");
+        toast.error("Mining failed");
+      }
     } catch (error) {
       addLog("error", "Mining failed.");
+      toast.error("Mining failed");
+      console.error(error);
     } finally {
       setIsLoading(false);
     }

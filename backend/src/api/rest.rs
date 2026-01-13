@@ -85,6 +85,13 @@ pub struct PurchaseDataRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct FaucetRequest {
+    pub address: String,
+    #[serde(default)]
+    pub amount: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MineBlockRequest {
     pub validator: String,
 }
@@ -262,6 +269,41 @@ pub async fn get_account(
     match blockchain.get_account(&address) {
         Some(account) => HttpResponse::Ok().json(ApiResponse::success(account)),
         None => HttpResponse::NotFound().json(ApiResponse::<()>::error("Account not found")),
+    }
+}
+
+/// Faucet - Give test tokens to an address
+pub async fn faucet(
+    data: web::Data<AppState>,
+    body: web::Json<FaucetRequest>,
+) -> impl Responder {
+    let mut blockchain = data.blockchain.write().await;
+    
+    // Create a faucet transfer transaction
+    let tx = Transaction::transfer(
+        "faucet".to_string(),
+        body.address.clone(),
+        body.amount.unwrap_or(1000), // Default 1000 tokens
+    );
+    
+    match blockchain.add_transaction(tx) {
+        Ok(hash) => {
+            info!("Faucet: sent {} tokens to {}", body.amount.unwrap_or(1000), &body.address);
+            
+            #[derive(Serialize)]
+            struct FaucetResponse {
+                address: String,
+                amount: u64,
+                transaction_hash: String,
+            }
+            
+            HttpResponse::Ok().json(ApiResponse::success(FaucetResponse {
+                address: body.address.clone(),
+                amount: body.amount.unwrap_or(1000),
+                transaction_hash: hash,
+            }))
+        }
+        Err(e) => HttpResponse::BadRequest().json(ApiResponse::<()>::error(&e)),
     }
 }
 
@@ -495,6 +537,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/api/accounts/{address}", web::get().to(get_account))
         .route("/api/accounts/{address}/balance", web::get().to(get_balance))
         .route("/api/accounts/{address}/transactions", web::get().to(get_account_transactions))
+        
+        // Faucet route (for testnet)
+        .route("/api/faucet", web::post().to(faucet))
         
         // Mining routes
         .route("/api/mine", web::post().to(mine_block))

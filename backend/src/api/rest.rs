@@ -272,39 +272,41 @@ pub async fn get_account(
     }
 }
 
-/// Faucet - Give test tokens to an address
+/// Faucet - Give test tokens to an address (testnet only)
 pub async fn faucet(
     data: web::Data<AppState>,
     body: web::Json<FaucetRequest>,
 ) -> impl Responder {
     let mut blockchain = data.blockchain.write().await;
+    let amount = body.amount.unwrap_or(1000);
     
-    // Create a faucet transfer transaction
-    let tx = Transaction::transfer(
-        "faucet".to_string(),
-        body.address.clone(),
-        body.amount.unwrap_or(1000), // Default 1000 tokens
-    );
-    
-    match blockchain.add_transaction(tx) {
-        Ok(hash) => {
-            info!("Faucet: sent {} tokens to {}", body.amount.unwrap_or(1000), &body.address);
-            
-            #[derive(Serialize)]
-            struct FaucetResponse {
-                address: String,
-                amount: u64,
-                transaction_hash: String,
-            }
-            
-            HttpResponse::Ok().json(ApiResponse::success(FaucetResponse {
-                address: body.address.clone(),
-                amount: body.amount.unwrap_or(1000),
-                transaction_hash: hash,
-            }))
-        }
-        Err(e) => HttpResponse::BadRequest().json(ApiResponse::<()>::error(&e)),
+    // For testnet: directly credit the account balance without requiring sender balance
+    // Get or create the account and add tokens directly
+    {
+        use crate::blockchain::chain::Account;
+        let account = blockchain.state.accounts
+            .entry(body.address.clone())
+            .or_insert_with(|| Account::new(body.address.clone()));
+        account.balance += amount;
     }
+    
+    // Create a record transaction hash for the faucet distribution
+    let tx_hash = format!("faucet_{}_{}", body.address, chrono::Utc::now().timestamp());
+    
+    info!("Faucet: credited {} tokens to {}", amount, &body.address);
+    
+    #[derive(Serialize)]
+    struct FaucetResponse {
+        address: String,
+        amount: u64,
+        transaction_hash: String,
+    }
+    
+    HttpResponse::Ok().json(ApiResponse::success(FaucetResponse {
+        address: body.address.clone(),
+        amount,
+        transaction_hash: tx_hash,
+    }))
 }
 
 /// Get account balance

@@ -219,5 +219,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - [EdgeAI Website](https://edgeai.network)
-- [GitHub Repository](https://github.com/Free0x/edgeai-alpha)
+- [GitHub Repository](https://github.com/EdgeAI-Chain/edgeai-alpha)
 - [API Documentation](https://docs.edgeai.network)

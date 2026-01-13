@@ -31,7 +31,7 @@ EdgeAI Explorer is a high-performance, real-time blockchain surveillance system 
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/Free0x/edgeai-explorer-alpha.git
+    git clone https://github.com/EdgeAI-Chain/edgeai-explorer-alpha.git
     cd edgeai-explorer-alpha
     ```
 

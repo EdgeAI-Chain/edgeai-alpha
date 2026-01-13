@@ -31,12 +31,12 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl:
-            'https://github.com/Free0x/edgeai-alpha/tree/main/docs/',
+            'https://github.com/EdgeAI-Chain/edgeai-alpha/tree/main/docs/',
         },
         blog: {
           showReadingTime: true,
           editUrl:
-            'https://github.com/Free0x/edgeai-alpha/tree/main/docs/',
+            'https://github.com/EdgeAI-Chain/edgeai-alpha/tree/main/docs/',
         },
         theme: {
           customCss: './src/css/custom.css',
@@ -66,7 +66,7 @@ const config: Config = {
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
-          href: 'https://github.com/Free0x/edgeai-alpha',
+          href: 'https://github.com/EdgeAI-Chain/edgeai-alpha',
           label: 'GitHub',
           position: 'right',
         },
@@ -110,7 +110,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/Free0x/edgeai-alpha',
+              href: 'https://github.com/EdgeAI-Chain/edgeai-alpha',
             },
           ],
         },

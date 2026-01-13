@@ -26,16 +26,16 @@ primary_region = "sin"  # Singapore - closest to Asia
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024  # Increased from 512 for blockchain initialization
 
 [checks]
   [checks.health]
-    grace_period = "30s"
-    interval = "15s"
+    grace_period = "120s"  # Increased from 30s - blockchain needs time to initialize
+    interval = "30s"       # Increased from 15s
     method = "get"
-    path = "/api/chain"
+    path = "/api/status"   # Changed to simpler endpoint
     port = 8080
-    timeout = "10s"
+    timeout = "30s"        # Increased from 10s
     type = "http"
 
 [mounts]

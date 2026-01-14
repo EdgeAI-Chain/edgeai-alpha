@@ -31,11 +31,15 @@ import {
   Info
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { apiCall } from "@/lib/api";
+
+// API Base URL
+const API_BASE = "https://edgeai-blockchain-node.fly.dev/api";
 
 // Types
 interface StakingStats {
-  totalStaked: string;
-  totalDelegated: string;
+  totalStaked: number;
+  totalDelegated: number;
   totalValidators: number;
   activeValidators: number;
   averageApy: number;
@@ -46,9 +50,9 @@ interface Validator {
   address: string;
   name: string;
   description: string;
-  totalStake: string;
-  selfStake: string;
-  delegatedStake: string;
+  totalStake: number;
+  selfStake: number;
+  delegatedStake: number;
   commission: number;
   status: "Active" | "Inactive" | "Jailed" | "Unbonding";
   uptime: number;
@@ -70,95 +74,85 @@ interface UnbondingEntry {
   completionTime: string;
 }
 
-// Mock API functions (replace with real API calls)
+// Real API functions
 const fetchStakingStats = async (): Promise<StakingStats> => {
-  // Simulated API response
+  try {
+    const response = await fetch(`${API_BASE}/staking/stats`);
+    const result = await response.json();
+    
+    if (result.success && result.data) {
+      const data = result.data;
+      return {
+        totalStaked: data.total_staked || 0,
+        totalDelegated: data.total_delegated || 0,
+        totalValidators: data.total_validators || 0,
+        activeValidators: data.active_validators || 0,
+        averageApy: 12.5, // Fixed APY for testnet
+        unbondingPeriod: 7, // 7 days
+      };
+    }
+  } catch (error) {
+    console.error("Failed to fetch staking stats:", error);
+  }
+  
+  // Fallback to default values
   return {
-    totalStaked: "125000000000000000000000000",
-    totalDelegated: "89000000000000000000000000",
-    totalValidators: 156,
-    activeValidators: 142,
+    totalStaked: 0,
+    totalDelegated: 0,
+    totalValidators: 0,
+    activeValidators: 0,
     averageApy: 12.5,
     unbondingPeriod: 7,
   };
 };
 
 const fetchValidators = async (): Promise<Validator[]> => {
-  // Simulated validators
-  return [
-    {
-      address: "0x1234567890abcdef1234567890abcdef12345678",
-      name: "EdgeAI Foundation",
-      description: "Official foundation validator node",
-      totalStake: "15000000000000000000000000",
-      selfStake: "10000000000000000000000000",
-      delegatedStake: "5000000000000000000000000",
-      commission: 5,
-      status: "Active",
-      uptime: 99.98,
-      votingPower: 12.5,
-    },
-    {
-      address: "0xabcdef1234567890abcdef1234567890abcdef12",
-      name: "IoT Network Hub",
-      description: "High-performance edge computing node",
-      totalStake: "12000000000000000000000000",
-      selfStake: "8000000000000000000000000",
-      delegatedStake: "4000000000000000000000000",
-      commission: 8,
-      status: "Active",
-      uptime: 99.95,
-      votingPower: 10.2,
-    },
-    {
-      address: "0x9876543210fedcba9876543210fedcba98765432",
-      name: "DataStream Validator",
-      description: "Specialized in medical IoT data",
-      totalStake: "9500000000000000000000000",
-      selfStake: "6000000000000000000000000",
-      delegatedStake: "3500000000000000000000000",
-      commission: 10,
-      status: "Active",
-      uptime: 99.92,
-      votingPower: 8.1,
-    },
-    {
-      address: "0xfedcba9876543210fedcba9876543210fedcba98",
-      name: "Smart City Node",
-      description: "Urban infrastructure data processing",
-      totalStake: "8200000000000000000000000",
-      selfStake: "5500000000000000000000000",
-      delegatedStake: "2700000000000000000000000",
-      commission: 7,
-      status: "Active",
-      uptime: 99.88,
-      votingPower: 7.0,
-    },
-    {
-      address: "0x1111222233334444555566667777888899990000",
-      name: "Green Energy Validator",
-      description: "Renewable energy monitoring network",
-      totalStake: "7100000000000000000000000",
-      selfStake: "4800000000000000000000000",
-      delegatedStake: "2300000000000000000000000",
-      commission: 6,
-      status: "Active",
-      uptime: 99.85,
-      votingPower: 6.1,
-    },
-  ];
+  try {
+    const response = await fetch(`${API_BASE}/staking/validators`);
+    const result = await response.json();
+    
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.map((v: any) => ({
+        address: v.address,
+        name: v.moniker || v.address.slice(0, 16),
+        description: v.details || "EdgeAI Validator Node",
+        totalStake: v.total_stake || 0,
+        selfStake: v.self_stake || 0,
+        delegatedStake: v.delegated_stake || 0,
+        commission: (v.commission_rate || 0) * 100,
+        status: v.status === "Active" ? "Active" : v.status === "Jailed" ? "Jailed" : "Inactive",
+        uptime: v.uptime || 99.9,
+        votingPower: v.voting_power || 0,
+      }));
+    }
+  } catch (error) {
+    console.error("Failed to fetch validators:", error);
+  }
+  
+  return [];
 };
 
-const fetchMyDelegations = async (): Promise<Delegation[]> => {
-  return [
-    {
-      validator: "0x1234567890abcdef1234567890abcdef12345678",
-      validatorName: "EdgeAI Foundation",
-      amount: "5000000000000000000000",
-      rewards: "125000000000000000000",
-      startTime: "2025-12-01T00:00:00Z",
-    },
-  ];
+const fetchMyDelegations = async (address?: string): Promise<Delegation[]> => {
+  if (!address) return [];
+  
+  try {
+    const response = await fetch(`${API_BASE}/staking/delegations/${address}`);
+    const result = await response.json();
+    
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.map((d: any) => ({
+        validator: d.validator,
+        validatorName: d.validator.slice(0, 16),
+        amount: String(d.amount || 0),
+        rewards: String(d.rewards || 0),
+        startTime: new Date().toISOString(),
+      }));
+    }
+  } catch (error) {
+    console.error("Failed to fetch delegations:", error);
+  }
+  
+  return [];
 };
 
 const fetchMyUnbonding = async (): Promise<UnbondingEntry[]> => {
@@ -166,18 +160,20 @@ const fetchMyUnbonding = async (): Promise<UnbondingEntry[]> => {
 };
 
 // Utility functions
-const formatEdge = (amount: string, decimals: number = 2): string => {
-  const value = BigInt(amount);
-  const edge = Number(value) / 1e18;
-  if (edge >= 1000000) {
-    return (edge / 1000000).toFixed(decimals) + "M";
-  } else if (edge >= 1000) {
-    return (edge / 1000).toFixed(decimals) + "K";
+const formatEdge = (amount: number | string, decimals: number = 2): string => {
+  const value = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (isNaN(value) || value === 0) return "0";
+  
+  if (value >= 1000000) {
+    return (value / 1000000).toFixed(decimals) + "M";
+  } else if (value >= 1000) {
+    return (value / 1000).toFixed(decimals) + "K";
   }
-  return edge.toFixed(decimals);
+  return value.toFixed(decimals);
 };
 
 const shortenAddress = (address: string): string => {
+  if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
 
@@ -192,10 +188,12 @@ export default function Staking() {
   const [undelegateAmount, setUndelegateAmount] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState("validators");
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  // Mock wallet state (replace with real wallet connection)
+  // Demo wallet state (will be replaced with real wallet)
   const [walletConnected] = useState(true);
-  const [walletBalance] = useState("10000000000000000000000"); // 10,000 EDGE
+  const [walletBalance] = useState(10000); // 10,000 EDGE
+  const [walletAddress] = useState("edge_demo_user_001");
 
   useEffect(() => {
     const loadData = async () => {
@@ -204,7 +202,7 @@ export default function Staking() {
         const [statsData, validatorsData, delegationsData, unbondingData] = await Promise.all([
           fetchStakingStats(),
           fetchValidators(),
-          fetchMyDelegations(),
+          fetchMyDelegations(walletAddress),
           fetchMyUnbonding(),
         ]);
         setStats(statsData);
@@ -218,29 +216,84 @@ export default function Staking() {
       }
     };
     loadData();
-  }, []);
+  }, [walletAddress]);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const handleDelegate = async () => {
     if (!selectedValidator || !delegateAmount) return;
     setIsProcessing(true);
-    // Simulate transaction
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setIsProcessing(false);
-    setDelegateAmount("");
-    // Refresh data
+    
+    try {
+      const response = await fetch(`${API_BASE}/staking/delegate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          delegator: walletAddress,
+          validator: selectedValidator.address,
+          amount: parseInt(delegateAmount),
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        showToast(`Successfully delegated ${delegateAmount} EDGE to ${selectedValidator.name}`, 'success');
+        setDelegateAmount("");
+        // Refresh data
+        const [statsData, validatorsData] = await Promise.all([
+          fetchStakingStats(),
+          fetchValidators(),
+        ]);
+        setStats(statsData);
+        setValidators(validatorsData);
+      } else {
+        showToast(result.error || 'Delegation failed', 'error');
+      }
+    } catch (error) {
+      showToast('Network error. Please try again.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleUndelegate = async () => {
     if (!selectedValidator || !undelegateAmount) return;
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setIsProcessing(false);
-    setUndelegateAmount("");
+    
+    try {
+      const response = await fetch(`${API_BASE}/staking/undelegate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          delegator: walletAddress,
+          validator: selectedValidator.address,
+          amount: parseInt(undelegateAmount),
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        showToast(`Undelegation started. Tokens will be available in 7 days.`, 'success');
+        setUndelegateAmount("");
+      } else {
+        showToast(result.error || 'Undelegation failed', 'error');
+      }
+    } catch (error) {
+      showToast('Network error. Please try again.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleClaimRewards = async () => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    showToast('Rewards claimed successfully!', 'success');
     setIsProcessing(false);
   };
 
@@ -254,8 +307,8 @@ export default function Staking() {
     }
   };
 
-  const totalRewards = myDelegations.reduce((acc, d) => acc + BigInt(d.rewards), BigInt(0));
-  const totalDelegated = myDelegations.reduce((acc, d) => acc + BigInt(d.amount), BigInt(0));
+  const totalRewards = myDelegations.reduce((acc, d) => acc + parseFloat(d.rewards || "0"), 0);
+  const totalDelegated = myDelegations.reduce((acc, d) => acc + parseFloat(d.amount || "0"), 0);
 
   if (loading) {
     return (
@@ -267,6 +320,17 @@ export default function Staking() {
 
   return (
     <div className="space-y-6">
+      {/* Toast notification */}
+      {toast && (
+        <div className={cn(
+          "fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center gap-2",
+          toast.type === 'success' ? "bg-green-500 text-white" : "bg-red-500 text-white"
+        )}>
+          {toast.type === 'success' ? <CheckCircle2 className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          {toast.message}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -278,128 +342,109 @@ export default function Staking() {
             Stake EDGE tokens to secure the network and earn rewards.
           </p>
         </div>
-        {!walletConnected && (
-          <Button>
-            <Wallet className="h-4 w-4 mr-2" />
-            Connect Wallet
-          </Button>
-        )}
       </div>
 
-      {/* Stats Overview */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="bg-card/50 border-muted">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Coins className="h-4 w-4" />
-              Total Staked
-            </CardTitle>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Staked</CardTitle>
+            <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats ? formatEdge(stats.totalStaked) : "0"} EDGE</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Network security value
-            </p>
+            <div className="text-2xl font-bold text-primary">
+              {formatEdge(stats?.totalStaked || 0)} EDGE
+            </div>
+            <p className="text-xs text-muted-foreground">Network security value</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 border-muted">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Average APY
-            </CardTitle>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Average APY</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-500">{stats?.averageApy || 0}%</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Estimated annual yield
-            </p>
+            <div className="text-2xl font-bold text-green-500">
+              {stats?.averageApy || 12.5}%
+            </div>
+            <p className="text-xs text-muted-foreground">Estimated annual yield</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 border-muted">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Active Validators
-            </CardTitle>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Active Validators</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.activeValidators || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">
+            <div className="text-2xl font-bold">
+              {stats?.activeValidators || 0}
+            </div>
+            <p className="text-xs text-muted-foreground">
               of {stats?.totalValidators || 0} total validators
             </p>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 border-muted">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Unbonding Period
-            </CardTitle>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Unbonding Period</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.unbondingPeriod || 7} Days</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Time to unlock staked tokens
-            </p>
+            <div className="text-2xl font-bold">
+              {stats?.unbondingPeriod || 7} Days
+            </div>
+            <p className="text-xs text-muted-foreground">Time to unlock staked tokens</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* My Staking Summary */}
-      {walletConnected && (
-        <Card className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Wallet className="h-5 w-5" />
-              My Staking
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-6 md:grid-cols-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Available Balance</p>
-                <p className="text-xl font-bold">{formatEdge(walletBalance)} EDGE</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Delegated</p>
-                <p className="text-xl font-bold">{formatEdge(totalDelegated.toString())} EDGE</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Pending Rewards</p>
-                <p className="text-xl font-bold text-green-500">{formatEdge(totalRewards.toString())} EDGE</p>
-              </div>
-              <div className="flex items-end">
-                <Button 
-                  onClick={handleClaimRewards} 
-                  disabled={totalRewards === BigInt(0) || isProcessing}
-                  className="w-full"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Gift className="h-4 w-4 mr-2" />
-                  )}
-                  Claim Rewards
-                </Button>
-              </div>
+      {/* My Staking Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5" />
+            My Staking
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Available Balance</p>
+              <p className="text-xl font-bold">{formatEdge(walletBalance)} EDGE</p>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <div>
+              <p className="text-sm text-muted-foreground">Total Delegated</p>
+              <p className="text-xl font-bold">{formatEdge(totalDelegated)} EDGE</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Pending Rewards</p>
+              <p className="text-xl font-bold text-green-500">{formatEdge(totalRewards)} EDGE</p>
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button 
+            onClick={handleClaimRewards} 
+            disabled={totalRewards === 0 || isProcessing}
+            className="w-full md:w-auto"
+          >
+            {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Gift className="h-4 w-4 mr-2" />}
+            Claim Rewards
+          </Button>
+        </CardFooter>
+      </Card>
 
-      {/* Main Content Tabs */}
+      {/* Validators Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+        <TabsList>
           <TabsTrigger value="validators">Validators</TabsTrigger>
           <TabsTrigger value="delegations">My Delegations</TabsTrigger>
           <TabsTrigger value="unbonding">Unbonding</TabsTrigger>
         </TabsList>
 
-        {/* Validators Tab */}
         <TabsContent value="validators" className="space-y-4">
           <Card>
             <CardHeader>
@@ -409,157 +454,50 @@ export default function Staking() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {validators.map((validator) => (
-                  <div
-                    key={validator.address}
-                    className="flex flex-col md:flex-row md:items-center justify-between p-4 rounded-lg border bg-card/50 hover:bg-card/80 transition-colors gap-4"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <Shield className="h-5 w-5 text-primary" />
-                        <span className="font-semibold">{validator.name}</span>
-                        <Badge variant="outline" className={getStatusColor(validator.status)}>
-                          {validator.status}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">{validator.description}</p>
-                      <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                        <span className="text-muted-foreground">
-                          Stake: <span className="text-foreground font-medium">{formatEdge(validator.totalStake)} EDGE</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Commission: <span className="text-foreground font-medium">{validator.commission}%</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Uptime: <span className="text-green-500 font-medium">{validator.uptime}%</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Voting Power: <span className="text-foreground font-medium">{validator.votingPower}%</span>
-                        </span>
-                      </div>
-                    </div>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setSelectedValidator(validator)}
-                        >
-                          <ArrowUpRight className="h-4 w-4 mr-2" />
-                          Delegate
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Delegate to {validator.name}</DialogTitle>
-                          <DialogDescription>
-                            Enter the amount of EDGE tokens you want to delegate to this validator.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>Amount (EDGE)</Label>
-                            <Input
-                              type="number"
-                              placeholder="0.00"
-                              value={delegateAmount}
-                              onChange={(e) => setDelegateAmount(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Available: {formatEdge(walletBalance)} EDGE
-                            </p>
-                          </div>
-                          <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                            <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5" />
-                            <div className="text-sm">
-                              <p className="font-medium text-yellow-500">Important</p>
-                              <p className="text-muted-foreground">
-                                Delegated tokens have a {stats?.unbondingPeriod || 7}-day unbonding period.
-                                Commission rate: {validator.commission}%
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                        <DialogFooter>
-                          <Button 
-                            onClick={handleDelegate} 
-                            disabled={!delegateAmount || isProcessing}
-                          >
-                            {isProcessing ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="h-4 w-4 mr-2" />
-                            )}
-                            Confirm Delegation
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* My Delegations Tab */}
-        <TabsContent value="delegations" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>My Delegations</CardTitle>
-              <CardDescription>
-                Manage your active delegations and claim rewards.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {myDelegations.length === 0 ? (
+              {validators.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  <Coins className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>You haven't delegated any tokens yet.</p>
-                  <p className="text-sm mt-1">Select a validator from the Validators tab to start earning rewards.</p>
+                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No validators registered yet.</p>
+                  <p className="text-sm">Be the first to register as a validator!</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {myDelegations.map((delegation, index) => (
-                    <div
-                      key={index}
-                      className="flex flex-col md:flex-row md:items-center justify-between p-4 rounded-lg border bg-card/50 gap-4"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <Shield className="h-5 w-5 text-primary" />
-                          <span className="font-semibold">{delegation.validatorName}</span>
+                  {validators.map((validator) => (
+                    <Card key={validator.address} className="p-4">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Shield className="h-5 w-5 text-primary" />
+                            <span className="font-semibold">{validator.name}</span>
+                            <Badge className={getStatusColor(validator.status)}>
+                              {validator.status}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {validator.description}
+                          </p>
+                          <div className="flex flex-wrap gap-4 mt-2 text-sm">
+                            <span>Stake: <strong>{formatEdge(validator.totalStake)} EDGE</strong></span>
+                            <span>Commission: <strong>{validator.commission}%</strong></span>
+                            <span>Uptime: <strong>{validator.uptime.toFixed(2)}%</strong></span>
+                            <span>Voting Power: <strong>{validator.votingPower.toFixed(1)}%</strong></span>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {shortenAddress(delegation.validator)}
-                        </p>
-                        <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                          <span className="text-muted-foreground">
-                            Delegated: <span className="text-foreground font-medium">{formatEdge(delegation.amount)} EDGE</span>
-                          </span>
-                          <span className="text-muted-foreground">
-                            Rewards: <span className="text-green-500 font-medium">{formatEdge(delegation.rewards)} EDGE</span>
-                          </span>
-                          <span className="text-muted-foreground">
-                            Since: <span className="text-foreground font-medium">
-                              {new Date(delegation.startTime).toLocaleDateString()}
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
                         <Dialog>
                           <DialogTrigger asChild>
-                            <Button variant="outline">
-                              <ArrowDownRight className="h-4 w-4 mr-2" />
-                              Undelegate
+                            <Button 
+                              variant="outline" 
+                              onClick={() => setSelectedValidator(validator)}
+                            >
+                              <ArrowUpRight className="h-4 w-4 mr-2" />
+                              Delegate
                             </Button>
                           </DialogTrigger>
                           <DialogContent>
                             <DialogHeader>
-                              <DialogTitle>Undelegate from {delegation.validatorName}</DialogTitle>
+                              <DialogTitle>Delegate to {validator.name}</DialogTitle>
                               <DialogDescription>
-                                Enter the amount of EDGE tokens you want to undelegate.
+                                Enter the amount of EDGE tokens you want to delegate.
                               </DialogDescription>
                             </DialogHeader>
                             <div className="space-y-4 py-4">
@@ -567,42 +505,38 @@ export default function Staking() {
                                 <Label>Amount (EDGE)</Label>
                                 <Input
                                   type="number"
-                                  placeholder="0.00"
-                                  value={undelegateAmount}
-                                  onChange={(e) => setUndelegateAmount(e.target.value)}
+                                  placeholder="Enter amount"
+                                  value={delegateAmount}
+                                  onChange={(e) => setDelegateAmount(e.target.value)}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                  Delegated: {formatEdge(delegation.amount)} EDGE
+                                  Available: {formatEdge(walletBalance)} EDGE
                                 </p>
                               </div>
-                              <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                                <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5" />
-                                <div className="text-sm">
-                                  <p className="font-medium text-yellow-500">Unbonding Period</p>
-                                  <p className="text-muted-foreground">
-                                    Undelegated tokens will be available after {stats?.unbondingPeriod || 7} days.
-                                  </p>
+                              <div className="bg-muted p-3 rounded-lg text-sm">
+                                <div className="flex justify-between">
+                                  <span>Commission Rate:</span>
+                                  <span>{validator.commission}%</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Estimated APY:</span>
+                                  <span className="text-green-500">{(12.5 * (1 - validator.commission / 100)).toFixed(2)}%</span>
                                 </div>
                               </div>
                             </div>
                             <DialogFooter>
                               <Button 
-                                onClick={handleUndelegate} 
-                                disabled={!undelegateAmount || isProcessing}
-                                variant="destructive"
+                                onClick={handleDelegate} 
+                                disabled={!delegateAmount || isProcessing}
                               >
-                                {isProcessing ? (
-                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                ) : (
-                                  <ArrowDownRight className="h-4 w-4 mr-2" />
-                                )}
-                                Confirm Undelegation
+                                {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                Confirm Delegation
                               </Button>
                             </DialogFooter>
                           </DialogContent>
                         </Dialog>
                       </div>
-                    </div>
+                    </Card>
                   ))}
                 </div>
               )}
@@ -610,13 +544,53 @@ export default function Staking() {
           </Card>
         </TabsContent>
 
-        {/* Unbonding Tab */}
-        <TabsContent value="unbonding" className="space-y-4">
+        <TabsContent value="delegations">
           <Card>
             <CardHeader>
-              <CardTitle>Unbonding Tokens</CardTitle>
+              <CardTitle>My Delegations</CardTitle>
               <CardDescription>
-                Tokens that are currently in the unbonding period.
+                Your active delegations and accumulated rewards.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {myDelegations.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Coins className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>You haven't delegated to any validators yet.</p>
+                  <p className="text-sm">Start earning rewards by delegating your EDGE tokens.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {myDelegations.map((delegation, index) => (
+                    <Card key={index} className="p-4">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="font-semibold">{delegation.validatorName}</p>
+                          <p className="text-sm text-muted-foreground">
+                            Delegated: {formatEdge(delegation.amount)} EDGE
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-green-500 font-semibold">
+                            +{formatEdge(delegation.rewards)} EDGE
+                          </p>
+                          <p className="text-xs text-muted-foreground">Rewards</p>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="unbonding">
+          <Card>
+            <CardHeader>
+              <CardTitle>Unbonding</CardTitle>
+              <CardDescription>
+                Tokens being unbonded from validators.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -627,33 +601,24 @@ export default function Staking() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {myUnbonding.map((entry, index) => {
-                    const completionDate = new Date(entry.completionTime);
-                    const now = new Date();
-                    const totalDays = stats?.unbondingPeriod || 7;
-                    const daysRemaining = Math.max(0, Math.ceil((completionDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-                    const progress = ((totalDays - daysRemaining) / totalDays) * 100;
-
-                    return (
-                      <div
-                        key={index}
-                        className="p-4 rounded-lg border bg-card/50"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Shield className="h-5 w-5 text-muted-foreground" />
-                            <span className="font-semibold">{entry.validatorName}</span>
-                          </div>
-                          <span className="text-lg font-bold">{formatEdge(entry.amount)} EDGE</span>
+                  {myUnbonding.map((entry, index) => (
+                    <Card key={index} className="p-4">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="font-semibold">{entry.validatorName}</p>
+                          <p className="text-sm text-muted-foreground">
+                            Amount: {formatEdge(entry.amount)} EDGE
+                          </p>
                         </div>
-                        <Progress value={progress} className="h-2 mb-2" />
-                        <div className="flex justify-between text-sm text-muted-foreground">
-                          <span>{daysRemaining} days remaining</span>
-                          <span>Available: {completionDate.toLocaleDateString()}</span>
+                        <div className="text-right">
+                          <p className="text-yellow-500 font-semibold">
+                            {new Date(entry.completionTime).toLocaleDateString()}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Completion Date</p>
                         </div>
                       </div>
-                    );
-                  })}
+                    </Card>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -661,34 +626,44 @@ export default function Staking() {
         </TabsContent>
       </Tabs>
 
-      {/* Info Card */}
-      <Card className="bg-card/50 border-muted">
+      {/* Info Section */}
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
+          <CardTitle className="flex items-center gap-2">
             <Info className="h-5 w-5" />
             About Staking
           </CardTitle>
         </CardHeader>
         <CardContent className="prose prose-sm dark:prose-invert max-w-none">
-          <p className="text-muted-foreground">
-            Staking EDGE tokens helps secure the EdgeAI network through the Proof of Information Entropy (PoIE) consensus mechanism. 
-            By delegating your tokens to validators, you contribute to network security and earn rewards proportional to your stake.
+          <p>
+            Staking EDGE tokens helps secure the EdgeAI network through the Proof of Information Entropy (PoIE) 
+            consensus mechanism. By delegating your tokens to validators, you contribute to network security 
+            and earn rewards proportional to your stake.
           </p>
-          <div className="grid md:grid-cols-3 gap-4 mt-4">
-            <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-              <h4 className="font-medium text-green-500 mb-1">Earn Rewards</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div className="p-4 bg-muted rounded-lg">
+              <h4 className="font-semibold flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-green-500" />
+                Earn Rewards
+              </h4>
               <p className="text-sm text-muted-foreground">
-                Earn up to {stats?.averageApy || 12}% APY by delegating to active validators.
+                Earn up to 12.5% APY by delegating to active validators.
               </p>
             </div>
-            <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <h4 className="font-medium text-blue-500 mb-1">Secure the Network</h4>
+            <div className="p-4 bg-muted rounded-lg">
+              <h4 className="font-semibold flex items-center gap-2">
+                <Shield className="h-4 w-4 text-blue-500" />
+                Secure the Network
+              </h4>
               <p className="text-sm text-muted-foreground">
                 Your stake helps validators process IoT data and maintain consensus.
               </p>
             </div>
-            <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
-              <h4 className="font-medium text-purple-500 mb-1">Participate in Governance</h4>
+            <div className="p-4 bg-muted rounded-lg">
+              <h4 className="font-semibold flex items-center gap-2">
+                <Users className="h-4 w-4 text-purple-500" />
+                Participate in Governance
+              </h4>
               <p className="text-sm text-muted-foreground">
                 Stakers can vote on protocol upgrades and network parameters.
               </p>

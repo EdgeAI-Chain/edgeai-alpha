@@ -82,6 +82,38 @@ async fn main() -> std::io::Result<()> {
     let staking_manager = Arc::new(RwLock::new(StakingManager::new(staking_config)));
     info!("Staking Manager initialized (Delegation + Slashing)");
     
+    // Register initial validators for testnet
+    {
+        use consensus::ValidatorDescription;
+        let mut sm = staking_manager.blocking_write();
+        
+        let initial_validators = vec![
+            ("edge_validator_foundation", "EdgeAI Foundation", "Official foundation validator node", 15_000_000, 0.05),
+            ("edge_validator_iot_hub", "IoT Network Hub", "High-performance edge computing node", 12_000_000, 0.08),
+            ("edge_validator_datastream", "DataStream Validator", "Specialized in medical IoT data", 9_500_000, 0.10),
+            ("edge_validator_smartcity", "Smart City Node", "Urban infrastructure data processing", 8_200_000, 0.07),
+            ("edge_validator_green", "Green Energy Validator", "Renewable energy monitoring network", 7_100_000, 0.06),
+        ];
+        
+        for (addr, name, desc, stake, commission) in initial_validators {
+            let description = ValidatorDescription {
+                moniker: name.to_string(),
+                identity: None,
+                website: Some(format!("https://{}.edgeai.network", addr)),
+                security_contact: None,
+                details: Some(desc.to_string()),
+            };
+            let _ = sm.register_validator(
+                addr.to_string(),
+                format!("{}_operator", addr),
+                stake,
+                commission,
+                description,
+            );
+        }
+        info!("Registered {} initial validators for testnet", 5);
+    }
+    
     // Initialize governance manager with custom config
     let governance_config = GovernanceConfig {
         min_deposit: 10_000_000_000_000_000_000_000, // 10,000 EDGE

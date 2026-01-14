@@ -79,13 +79,12 @@ async fn main() -> std::io::Result<()> {
         downtime_window: 1000,
         commission_range: (0.0, 0.25), // 0-25%
     };
-    let staking_manager = Arc::new(RwLock::new(StakingManager::new(staking_config)));
-    info!("Staking Manager initialized (Delegation + Slashing)");
+    // Create staking manager and register initial validators before wrapping in Arc
+    let mut staking_mgr = StakingManager::new(staking_config);
     
     // Register initial validators for testnet
     {
         use consensus::ValidatorDescription;
-        let mut sm = staking_manager.blocking_write();
         
         let initial_validators = vec![
             ("edge_validator_foundation", "EdgeAI Foundation", "Official foundation validator node", 15_000_000, 0.05),
@@ -103,7 +102,7 @@ async fn main() -> std::io::Result<()> {
                 security_contact: None,
                 details: Some(desc.to_string()),
             };
-            let _ = sm.register_validator(
+            let _ = staking_mgr.register_validator(
                 addr.to_string(),
                 format!("{}_operator", addr),
                 stake,
@@ -113,6 +112,9 @@ async fn main() -> std::io::Result<()> {
         }
         info!("Registered {} initial validators for testnet", 5);
     }
+    
+    let staking_manager = Arc::new(RwLock::new(staking_mgr));
+    info!("Staking Manager initialized (Delegation + Slashing)");
     
     // Initialize governance manager with custom config
     let governance_config = GovernanceConfig {

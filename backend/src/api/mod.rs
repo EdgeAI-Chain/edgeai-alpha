@@ -12,6 +12,7 @@ pub mod device;
 pub mod staking;
 pub mod contracts;
 pub mod governance;
+pub mod dex;
 
 // Authentication exports
 pub use auth::{SignedRequest, AuthData, verify_signed_request, create_sign_message};
@@ -26,3 +27,4 @@ pub use device::{DeviceState, configure_device_routes};
 pub use staking::{StakingState, configure_staking_routes};
 pub use contracts::{ContractState, configure_contract_routes};
 pub use governance::{GovernanceState, configure_governance_routes};
+pub use dex::{DexState, configure_dex_routes};

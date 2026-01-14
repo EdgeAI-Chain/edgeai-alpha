@@ -25,10 +25,10 @@ use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
 use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
 use api::{
-    AppState, DeviceState, StakingState, ContractState, GovernanceState,
+    AppState, DeviceState, StakingState, ContractState, GovernanceState, DexState,
     configure_routes, configure_wallet_routes, configure_data_routes, 
     configure_device_routes, configure_staking_routes, configure_contract_routes,
-    configure_governance_routes
+    configure_governance_routes, configure_dex_routes
 };
 use contracts::WasmRuntime;
 
@@ -212,6 +212,10 @@ async fn main() -> std::io::Result<()> {
     // Create governance state
     let governance_state: web::Data<GovernanceState> = web::Data::new(governance_manager.clone());
 
+    // Create DEX state
+    let dex_state = web::Data::new(DexState::new());
+    info!("DEX initialized with default trading pairs");
+
     // Start P2P event handler
     if let Some(mut event_rx) = p2p_event_rx {
         let p2p_blockchain = blockchain.clone();
@@ -351,6 +355,7 @@ async fn main() -> std::io::Result<()> {
     info!("Staking API at http://{}/api/staking/", bind_address);
     info!("Smart Contracts API at http://{}/api/contracts/", bind_address);
     info!("Governance API at http://{}/api/governance/", bind_address);
+    info!("DEX API at http://{}/api/dex/", bind_address);
     info!("Block Explorer available at http://{}/", bind_address);
     
     // Start HTTP server
@@ -376,6 +381,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(staking_state.clone())
             .app_data(contract_state.clone())
             .app_data(governance_state.clone())
+            .app_data(dex_state.clone())
             .configure(configure_routes)
             .configure(configure_wallet_routes)
             .configure(configure_data_routes)
@@ -383,6 +389,7 @@ async fn main() -> std::io::Result<()> {
             .configure(configure_staking_routes)
             .configure(configure_contract_routes)
             .configure(configure_governance_routes)
+            .configure(|cfg| configure_dex_routes(cfg, dex_state.clone()))
             .service(Files::new("/", "./static").index_file("index.html"))
     })
     .bind(bind_address)?

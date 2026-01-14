@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, BarChart3, Maximize2, Minimize2 } from "lucide-react";
+import { TrendingUp, BarChart3, Maximize2, Minimize2, ArrowRightLeft, Droplets } from "lucide-react";
+import { fetchPairs, fetchTrades, getSwapQuote, executeSwap, PairStats, Trade as DexTrade, formatNumber, formatPrice } from "@/lib/dexApi";
+import { toast } from "sonner";
 import { TradingPanel } from "@/components/TradingPanel";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { CandleStickChart } from "@/components/CandleStickChart";
@@ -32,6 +34,12 @@ export default function DEX() {
   const [chartType, setChartType] = useState<'line' | 'candle'>('candle');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [pairs, setPairs] = useState<PairStats[]>([]);
+  const [selectedPair, setSelectedPair] = useState<string>('EDGE-USDT');
+  const [recentTrades, setRecentTrades] = useState<DexTrade[]>([]);
+  const [swapAmount, setSwapAmount] = useState<string>('');
+  const [swapDirection, setSwapDirection] = useState<'buy' | 'sell'>('buy');
+  const [swapQuote, setSwapQuote] = useState<{ amountOut: number; fee: number; priceImpact: number } | null>(null);
 
   // Toggle full screen mode
   useEffect(() => {
@@ -41,6 +49,88 @@ export default function DEX() {
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, []);
+
+  // Fetch trading pairs from backend
+  useEffect(() => {
+    const loadPairs = async () => {
+      const pairsData = await fetchPairs();
+      if (pairsData.length > 0) {
+        setPairs(pairsData);
+        // Update market stats from selected pair
+        const selected = pairsData.find(p => p.pair.id === selectedPair);
+        if (selected) {
+          setCurrentPrice(selected.price);
+          setMarketStats({
+            volume24h: selected.pair.volume_24h,
+            high24h: selected.high_24h,
+            low24h: selected.low_24h,
+            change24h: selected.price_change_24h
+          });
+        }
+      }
+    };
+    loadPairs();
+    const interval = setInterval(loadPairs, 10000); // Refresh every 10s
+    return () => clearInterval(interval);
+  }, [selectedPair]);
+
+  // Fetch recent trades
+  useEffect(() => {
+    const loadTrades = async () => {
+      const trades = await fetchTrades(selectedPair);
+      setRecentTrades(trades);
+    };
+    loadTrades();
+  }, [selectedPair]);
+
+  // Get swap quote when amount changes
+  useEffect(() => {
+    const getQuote = async () => {
+      const amount = parseFloat(swapAmount);
+      if (isNaN(amount) || amount <= 0) {
+        setSwapQuote(null);
+        return;
+      }
+      const quote = await getSwapQuote(selectedPair, amount, swapDirection === 'sell');
+      if (quote) {
+        setSwapQuote({
+          amountOut: quote.amount_out,
+          fee: quote.fee,
+          priceImpact: quote.price_impact
+        });
+      }
+    };
+    const debounce = setTimeout(getQuote, 300);
+    return () => clearTimeout(debounce);
+  }, [swapAmount, swapDirection, selectedPair]);
+
+  // Handle swap execution
+  const handleSwap = async () => {
+    const amount = parseFloat(swapAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Please enter a valid amount');
+      return;
+    }
+    toast.info('Executing swap...');
+    const result = await executeSwap(
+      selectedPair,
+      amount,
+      swapDirection === 'sell',
+      'demo_user' // In production, use actual wallet address
+    );
+    if (result) {
+      toast.success(`Swap successful! Received ${result.total} tokens`);
+      setSwapAmount('');
+      setSwapQuote(null);
+      // Refresh data
+      const pairsData = await fetchPairs();
+      setPairs(pairsData);
+      const trades = await fetchTrades(selectedPair);
+      setRecentTrades(trades);
+    } else {
+      toast.error('Swap failed. Please try again.');
+    }
+  };
 
   // Fetch real-time data from DexScreener
   const fetchRealData = async () => {

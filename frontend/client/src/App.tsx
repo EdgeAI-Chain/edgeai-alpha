@@ -18,6 +18,7 @@ import Governance from "@/pages/Governance";
 import Marketplace from "@/pages/Marketplace";
 import DEX from "@/pages/DEX";
 import Wallet from "@/pages/Wallet";
+import Bridge from "@/pages/Bridge";
 import NotFound from "@/pages/NotFound";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +36,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     { path: "/dex", label: "DEX", icon: "fas fa-chart-bar" },
     { path: "/marketplace", label: "Market Place", icon: "fas fa-store" },
     { path: "/wallet", label: "Wallet", icon: "fas fa-wallet" },
+    { path: "/bridge", label: "Bridge", icon: "fas fa-exchange-alt" },
   ];
 
   return (
@@ -125,6 +127,7 @@ function App() {
           <Route path="/dex" component={DEX} />
           <Route path="/marketplace" component={Marketplace} />
           <Route path="/wallet" component={Wallet} />
+          <Route path="/bridge" component={Bridge} />
           <Route component={NotFound} />
         </Switch>
       </Layout>

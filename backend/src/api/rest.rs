@@ -518,10 +518,46 @@ pub struct PaginationQuery {
     pub limit: Option<u64>,
 }
 
+// ============ Health & Status Endpoints ============
+
+/// Lightweight health check for Fly.io and load balancers
+pub async fn health_check() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "service": "edgeai-blockchain-node",
+        "version": "0.6.0"
+    }))
+}
+
+/// Node status endpoint with chain metrics for monitoring
+pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
+    let blockchain = data.blockchain.read().await;
+    let height = blockchain.total_blocks;
+    let pending_tx = blockchain.pending_transactions.len();
+    let last_block_time = blockchain.last_block_time;
+    let difficulty = blockchain.difficulty;
+    let active_accounts = blockchain.state.accounts.len();
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "running",
+        "chain_height": height,
+        "pending_tx": pending_tx,
+        "last_block_time": last_block_time,
+        "difficulty": difficulty,
+        "active_accounts": active_accounts,
+        "version": "0.6.0",
+        "node_type": "full_node"
+    }))
+}
+
 // ============ Router Configuration ============
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
+        // Health & status routes (must be first for Fly.io health checks)
+        .route("/api/health", web::get().to(health_check))
+        .route("/api/status", web::get().to(get_node_status))
+
         // Blockchain routes
         .route("/api/chain", web::get().to(get_chain_info))
         .route("/api/blocks", web::get().to(get_blocks))

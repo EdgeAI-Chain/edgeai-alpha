@@ -14,7 +14,7 @@ use actix_web::{web, App, HttpServer, middleware};
 use actix_cors::Cors;
 use actix_web::http::header;
 use actix_files::Files;
-use log::{info, LevelFilter};
+use log::{info, error, LevelFilter};
 use env_logger::Builder;
 use std::fs;
 use std::path::Path;
@@ -269,80 +269,98 @@ async fn main() -> std::io::Result<()> {
     let mining_governance = governance_manager.clone();
     
     tokio::spawn(async move {
-        info!("Block producer started");
+        info!("Block producer started (10s fixed interval)");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        let mut consecutive_errors: u32 = 0;
         
         loop {
             interval.tick().await;
             
-            let mut chain = mining_blockchain.write().await;
-            let current_height = chain.chain.len() as u64;
-            
-            // Update device activity status every 100 blocks
-            if current_height % 100 == 0 {
-                let mut registry = mining_device_registry.write().await;
-                registry.update_activity_status(24); // 24 hours inactive threshold
-                let stats = registry.get_stats();
-                info!("Device Registry: {} total, {} active, {} regions", 
-                    stats.total_devices, stats.active_devices, stats.regions_covered);
+            // Wrap the entire block production cycle in error handling
+            // to prevent any single failure from killing the producer
+            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                let mut chain = mining_blockchain.write().await;
+                let current_height = chain.chain.len() as u64;
                 
-                // Process unbonding queue
-                let mut staking = mining_staking.write().await;
-                let completed = staking.process_unbonding();
-                if !completed.is_empty() {
-                    info!("Processed {} unbonding entries", completed.len());
-                }
-                
-                // Process expired governance deposits
-                let mut governance = mining_governance.write().await;
-                governance.process_expired_deposits();
-            }
-            
-            // Distribute staking rewards every block
-            {
-                let mut staking = mining_staking.write().await;
-                let block_reward = 100; // Base block reward
-                staking.distribute_rewards(block_reward);
-            }
-            
-            // Collect pending transactions from mempool
-            let mut mempool = MempoolManager::with_block_context(current_height);
-            // Phase 1: Generate 100-150 transactions per block for 1000 device network
-            // Target: 10-15 TPS with 10-second block interval
-            let batch_size = 100 + (current_height % 51) as usize;
-            let pending_txs = mempool.collect_pending(batch_size);
-            info!("Generated {} transactions from mempool for block {}", pending_txs.len(), current_height);
-            
-            // Add collected transactions to chain
-            let mut added_count = 0;
-            let mut failed_count = 0;
-            for tx in pending_txs {
-                match chain.add_transaction(tx) {
-                    Ok(_) => added_count += 1,
-                    Err(e) => {
-                        failed_count += 1;
-                        log::warn!("Transaction rejected: {}", e);
-                    }
-                }
-            }
-            if added_count > 0 || failed_count > 0 {
-                info!("Mempool: {} transactions added, {} rejected", added_count, failed_count);
-            }
-            
-            // Produce new block
-            match chain.mine_block(mining_validator.clone()) {
-                Ok(block) => {
-                    info!("Produced block #{} with {} transactions", 
-                          block.index, block.transactions.len());
+                // Update device activity status every 100 blocks
+                if current_height % 100 == 0 {
+                    let mut registry = mining_device_registry.write().await;
+                    registry.update_activity_status(24);
+                    let stats = registry.get_stats();
+                    info!("Device Registry: {} total, {} active, {} regions", 
+                        stats.total_devices, stats.active_devices, stats.regions_covered);
                     
-                    // Broadcast block to P2P network
-                    let p2p_guard = mining_p2p_tx.read().await;
-                    if let Some(ref tx) = *p2p_guard {
-                        let _ = tx.send(NetworkCommand::BroadcastBlock(block.clone())).await;
+                    let mut staking = mining_staking.write().await;
+                    let completed = staking.process_unbonding();
+                    if !completed.is_empty() {
+                        info!("Processed {} unbonding entries", completed.len());
                     }
-                },
+                    
+                    let mut governance = mining_governance.write().await;
+                    governance.process_expired_deposits();
+                }
+                
+                // Distribute staking rewards every block
+                {
+                    let mut staking = mining_staking.write().await;
+                    let block_reward = 100;
+                    staking.distribute_rewards(block_reward);
+                }
+                
+                // Collect pending transactions from mempool
+                let mut mempool = MempoolManager::with_block_context(current_height);
+                let batch_size = 100 + (current_height % 51) as usize;
+                let pending_txs = mempool.collect_pending(batch_size);
+                info!("Generated {} transactions from mempool for block {}", pending_txs.len(), current_height);
+                
+                let mut added_count = 0;
+                let mut failed_count = 0;
+                for tx in pending_txs {
+                    match chain.add_transaction(tx) {
+                        Ok(_) => added_count += 1,
+                        Err(e) => {
+                            failed_count += 1;
+                            log::warn!("Transaction rejected: {}", e);
+                        }
+                    }
+                }
+                if added_count > 0 || failed_count > 0 {
+                    info!("Mempool: {} transactions added, {} rejected", added_count, failed_count);
+                }
+                
+                // Produce new block
+                match chain.mine_block(mining_validator.clone()) {
+                    Ok(block) => {
+                        info!("Produced block #{} with {} transactions", 
+                              block.index, block.transactions.len());
+                        
+                        let p2p_guard = mining_p2p_tx.read().await;
+                        if let Some(ref tx) = *p2p_guard {
+                            let _ = tx.send(NetworkCommand::BroadcastBlock(block.clone())).await;
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("Block production failed: {}", e);
+                    }
+                }
+                
+                Ok(())
+            }.await;
+            
+            match result {
+                Ok(_) => {
+                    if consecutive_errors > 0 {
+                        info!("Block producer recovered after {} consecutive errors", consecutive_errors);
+                    }
+                    consecutive_errors = 0;
+                }
                 Err(e) => {
-                    log::warn!("Block production failed: {}", e);
+                    consecutive_errors += 1;
+                    error!("Block production cycle error (#{} consecutive): {}", consecutive_errors, e);
+                    if consecutive_errors >= 10 {
+                        error!("Block producer has failed {} times consecutively, but will keep retrying", consecutive_errors);
+                    }
+                    // Always continue - never exit the loop
                 }
             }
         }
@@ -364,6 +382,9 @@ async fn main() -> std::io::Result<()> {
         let cors = Cors::default()
             .allowed_origin("https://edgeai-alpha.vercel.app")
             .allowed_origin("https://edgeai-chain.github.io")
+            .allowed_origin("https://edgeaiexplorer.org")
+            .allowed_origin("https://www.edgeaiexplorer.org")
+            .allowed_origin("https://edgeaiexplor-hg7rs66y.manus.space")
             .allowed_origin("http://localhost:3000")
             .allowed_origin("http://localhost:5173")
             .allowed_origin("http://127.0.0.1:3000")

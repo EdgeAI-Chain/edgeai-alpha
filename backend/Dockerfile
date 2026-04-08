@@ -60,8 +60,8 @@ USER edgeai
 EXPOSE 8080 9000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/api/chain || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -f http://localhost:8080/api/health || exit 1
 
 # Environment variables for configuration
 # EDGEAI_BOOTSTRAP_NODES - Comma-separated list of bootstrap node addresses

@@ -14,3 +14,4 @@ pub use block::Block;
 pub use transaction::{Transaction, TransactionType};
 pub use chain::Blockchain;
 pub use mempool::MempoolManager;
+pub use storage::DbStats;

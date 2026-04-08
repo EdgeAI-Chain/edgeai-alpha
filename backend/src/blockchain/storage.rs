@@ -390,6 +390,61 @@ impl Storage {
             .map_err(|e| format!("Failed to flush RocksDB: {}", e))
     }
     
+    /// Trigger manual compaction on all column families to reclaim disk space.
+    /// This merges SST files, removes tombstones, and reduces overall disk usage.
+    /// Should be called periodically (e.g., every 1000 blocks / ~2.8 hours).
+    pub fn compact_all(&self) {
+        let cf_names = [
+            CF_BLOCKS, CF_BLOCK_HASHES, CF_TRANSACTIONS,
+            CF_ACCOUNTS, CF_DATA_REGISTRY, CF_METADATA,
+        ];
+        
+        for cf_name in &cf_names {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                self.db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+                info!("Compacted column family: {}", cf_name);
+            }
+        }
+        info!("RocksDB full compaction completed");
+    }
+    
+    /// Get RocksDB storage statistics for monitoring.
+    /// Returns approximate sizes of each column family and total disk usage.
+    pub fn get_db_stats(&self) -> DbStats {
+        let mut cf_sizes: Vec<(String, u64)> = Vec::new();
+        let cf_names = [
+            CF_BLOCKS, CF_BLOCK_HASHES, CF_TRANSACTIONS,
+            CF_ACCOUNTS, CF_DATA_REGISTRY, CF_METADATA,
+        ];
+        
+        let mut total_size: u64 = 0;
+        for cf_name in &cf_names {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                // Use RocksDB property to get approximate size
+                let size = self.db
+                    .property_int_value_cf(&cf, "rocksdb.estimate-live-data-size")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
+                cf_sizes.push((cf_name.to_string(), size));
+                total_size += size;
+            }
+        }
+        
+        // Get number of SST files
+        let num_files = self.db
+            .property_int_value("rocksdb.num-files-at-level0")
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        
+        DbStats {
+            total_live_data_bytes: total_size,
+            column_family_sizes: cf_sizes,
+            level0_files: num_files,
+        }
+    }
+    
     // Helper methods
     fn get_u64(&self, cf: &rocksdb::ColumnFamily, key: &[u8]) -> Option<u64> {
         match self.db.get_cf(cf, key) {
@@ -415,4 +470,12 @@ impl Storage {
 pub struct TxLocation {
     pub block_index: u64,
     pub tx_index: u32,
+}
+
+/// RocksDB storage statistics for monitoring
+#[derive(Debug, Clone, Serialize)]
+pub struct DbStats {
+    pub total_live_data_bytes: u64,
+    pub column_family_sizes: Vec<(String, u64)>,
+    pub level0_files: u64,
 }

@@ -21,6 +21,40 @@ use std::path::Path;
 
 use blockchain::{Blockchain, MempoolManager};
 use consensus::{PoIEConsensus, DeviceRegistry, StakingManager, StakingConfig, GovernanceManager, GovernanceConfig};
+
+/// Check disk usage for a given path using statvfs.
+/// Returns (used_percent, used_gb, total_gb) or None on failure.
+fn check_disk_usage(path: &str) -> Option<(f64, f64, f64)> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    
+    let c_path = CString::new(path).ok()?;
+    let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+    
+    let result = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    
+    let stat = unsafe { stat.assume_init() };
+    let block_size = stat.f_frsize as f64;
+    let total_blocks = stat.f_blocks as f64;
+    let free_blocks = stat.f_bfree as f64;
+    
+    let total_bytes = total_blocks * block_size;
+    let free_bytes = free_blocks * block_size;
+    let used_bytes = total_bytes - free_bytes;
+    
+    if total_bytes == 0.0 {
+        return None;
+    }
+    
+    let used_pct = (used_bytes / total_bytes) * 100.0;
+    let used_gb = used_bytes / (1024.0 * 1024.0 * 1024.0);
+    let total_gb = total_bytes / (1024.0 * 1024.0 * 1024.0);
+    
+    Some((used_pct, used_gb, total_gb))
+}
 use data_market::DataMarketplace;
 use network::{NetworkManager, NodeType};
 use network::libp2p_network::{NetworkConfig, NetworkCommand, NetworkEvent, start_p2p_network};
@@ -43,7 +77,7 @@ async fn main() -> std::io::Result<()> {
         .init();
     
     info!("============================================");
-    info!("   EdgeAI Blockchain Node v0.6.0");
+    info!("   EdgeAI Blockchain Node v0.6.1");
     info!("   The Most Intelligent Data Chain");
     info!("   PoIE 2.0 + Staking + Contracts + DAO!");
     info!("============================================");
@@ -298,6 +332,37 @@ async fn main() -> std::io::Result<()> {
                     
                     let mut governance = mining_governance.write().await;
                     governance.process_expired_deposits();
+                }
+                
+                // Disk usage monitoring every 60 blocks (~10 minutes)
+                if current_height % 60 == 0 {
+                    match check_disk_usage(DATA_DIR) {
+                        Some((used_pct, used_gb, total_gb)) => {
+                            if used_pct >= 90.0 {
+                                error!("CRITICAL: Disk usage at {:.1}% ({:.2} GB / {:.2} GB) - immediate attention required!", 
+                                    used_pct, used_gb, total_gb);
+                            } else if used_pct >= 80.0 {
+                                log::warn!("WARNING: Disk usage at {:.1}% ({:.2} GB / {:.2} GB) - consider expanding volume", 
+                                    used_pct, used_gb, total_gb);
+                            } else {
+                                info!("Disk usage: {:.1}% ({:.2} GB / {:.2} GB)", used_pct, used_gb, total_gb);
+                            }
+                        }
+                        None => {
+                            log::warn!("Failed to read disk usage for {}", DATA_DIR);
+                        }
+                    }
+                }
+                
+                // RocksDB compaction every 1000 blocks (~2.8 hours)
+                if current_height > 0 && current_height % 1000 == 0 {
+                    info!("Triggering scheduled RocksDB compaction at block {}", current_height);
+                    chain.compact_storage();
+                    if let Some(db_stats) = chain.get_db_stats() {
+                        let live_mb = db_stats.total_live_data_bytes as f64 / (1024.0 * 1024.0);
+                        info!("RocksDB stats after compaction: {:.1} MB live data, {} L0 files", 
+                            live_mb, db_stats.level0_files);
+                    }
                 }
                 
                 // Distribute staking rewards every block

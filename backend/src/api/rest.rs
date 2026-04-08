@@ -525,11 +525,11 @@ pub async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
         "service": "edgeai-blockchain-node",
-        "version": "0.6.0"
+        "version": "0.6.1"
     }))
 }
 
-/// Node status endpoint with chain metrics for monitoring
+/// Node status endpoint with chain metrics, disk usage, and RocksDB stats for monitoring
 pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
     let blockchain = data.blockchain.read().await;
     let height = blockchain.total_blocks;
@@ -537,6 +537,21 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
     let last_block_time = blockchain.last_block_time;
     let difficulty = blockchain.difficulty;
     let active_accounts = blockchain.state.accounts.len();
+    
+    // Disk usage via statvfs
+    let disk_info = get_disk_usage("/data");
+    
+    // RocksDB stats
+    let db_stats = blockchain.get_db_stats();
+    let db_info = db_stats.map(|s| {
+        serde_json::json!({
+            "live_data_mb": (s.total_live_data_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0,
+            "level0_files": s.level0_files,
+            "column_families": s.column_family_sizes.iter().map(|(name, size)| {
+                serde_json::json!({ "name": name, "size_mb": (*size as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0 })
+            }).collect::<Vec<_>>()
+        })
+    });
 
     HttpResponse::Ok().json(serde_json::json!({
         "status": "running",
@@ -545,9 +560,60 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
         "last_block_time": last_block_time,
         "difficulty": difficulty,
         "active_accounts": active_accounts,
-        "version": "0.6.0",
-        "node_type": "full_node"
+        "version": "0.6.1",
+        "node_type": "full_node",
+        "disk": disk_info,
+        "rocksdb": db_info
     }))
+}
+
+/// Get disk usage for a path using statvfs
+fn get_disk_usage(path: &str) -> serde_json::Value {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    
+    let c_path = match CString::new(path) {
+        Ok(p) => p,
+        Err(_) => return serde_json::json!(null),
+    };
+    let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+    
+    let result = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+        return serde_json::json!(null);
+    }
+    
+    let stat = unsafe { stat.assume_init() };
+    let block_size = stat.f_frsize as f64;
+    let total_bytes = stat.f_blocks as f64 * block_size;
+    let free_bytes = stat.f_bfree as f64 * block_size;
+    let used_bytes = total_bytes - free_bytes;
+    
+    if total_bytes == 0.0 {
+        return serde_json::json!(null);
+    }
+    
+    let used_pct = (used_bytes / total_bytes * 100.0 * 10.0).round() / 10.0;
+    let total_gb = (total_bytes / (1024.0 * 1024.0 * 1024.0) * 100.0).round() / 100.0;
+    let used_gb = (used_bytes / (1024.0 * 1024.0 * 1024.0) * 100.0).round() / 100.0;
+    let free_gb = (free_bytes / (1024.0 * 1024.0 * 1024.0) * 100.0).round() / 100.0;
+    
+    let alert_level = if used_pct >= 90.0 {
+        "critical"
+    } else if used_pct >= 80.0 {
+        "warning"
+    } else {
+        "ok"
+    };
+    
+    serde_json::json!({
+        "path": path,
+        "total_gb": total_gb,
+        "used_gb": used_gb,
+        "free_gb": free_gb,
+        "used_percent": used_pct,
+        "alert_level": alert_level
+    })
 }
 
 // ============ Router Configuration ============

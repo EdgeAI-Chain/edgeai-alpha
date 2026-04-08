@@ -620,6 +620,20 @@ impl Blockchain {
         }
     }
     
+    /// Trigger RocksDB compaction to reclaim disk space
+    pub fn compact_storage(&self) {
+        if let Some(ref storage) = self.storage {
+            storage.compact_all();
+        } else {
+            info!("No RocksDB storage available for compaction");
+        }
+    }
+    
+    /// Get RocksDB storage statistics
+    pub fn get_db_stats(&self) -> Option<crate::blockchain::storage::DbStats> {
+        self.storage.as_ref().map(|s| s.get_db_stats())
+    }
+    
     /// Get the latest block
     pub fn latest_block(&self) -> &Block {
         self.chain.last().unwrap()

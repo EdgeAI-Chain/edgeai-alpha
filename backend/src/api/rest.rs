@@ -552,6 +552,19 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
             }).collect::<Vec<_>>()
         })
     });
+    
+    // Cold storage stats
+    let cold_info = blockchain.get_cold_storage_stats().map(|cs| {
+        serde_json::json!({
+            "enabled": cs.enabled,
+            "cutoff_height": cs.cutoff_height,
+            "total_shards": cs.total_shards,
+            "total_archived_entries": cs.total_archived_entries,
+            "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0,
+            "shard_size": cs.shard_size,
+            "keep_hot_blocks": cs.keep_hot_blocks
+        })
+    });
 
     HttpResponse::Ok().json(serde_json::json!({
         "status": "running",
@@ -560,10 +573,11 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
         "last_block_time": last_block_time,
         "difficulty": difficulty,
         "active_accounts": active_accounts,
-        "version": "0.6.1",
+        "version": "0.7.0",
         "node_type": "full_node",
         "disk": disk_info,
-        "rocksdb": db_info
+        "rocksdb": db_info,
+        "cold_storage": cold_info
     }))
 }
 
@@ -616,6 +630,35 @@ fn get_disk_usage(path: &str) -> serde_json::Value {
     })
 }
 
+// ============ Maintenance Handlers ============
+
+/// Manually trigger cold storage migration (POST /api/maintenance/cold-migrate)
+pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder {
+    let mut blockchain = data.blockchain.write().await;
+    let height = blockchain.total_blocks;
+    
+    info!("Manual cold storage migration triggered at height {}", height);
+    let migrated = blockchain.migrate_cold_storage();
+    
+    let cold_stats = blockchain.get_cold_storage_stats();
+    let db_stats = blockchain.get_db_stats();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "migrated_entries": migrated,
+        "chain_height": height,
+        "cold_storage": cold_stats.map(|cs| serde_json::json!({
+            "cutoff_height": cs.cutoff_height,
+            "total_shards": cs.total_shards,
+            "total_archived_entries": cs.total_archived_entries,
+            "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0
+        })),
+        "rocksdb": db_stats.map(|s| serde_json::json!({
+            "live_data_mb": (s.total_live_data_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
+        }))
+    }))
+}
+
 // ============ Router Configuration ============
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
@@ -661,5 +704,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         
         // Network routes
         .route("/api/network", web::get().to(get_network_stats))
-        .route("/api/network/peers", web::get().to(get_peers));
+        .route("/api/network/peers", web::get().to(get_peers))
+        
+        // Maintenance routes
+        .route("/api/maintenance/cold-migrate", web::post().to(trigger_cold_migration));
 }

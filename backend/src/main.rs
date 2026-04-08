@@ -365,6 +365,22 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
                 
+                // Cold storage migration every 5000 blocks (~14 hours)
+                // Migrates old tx indexes from RocksDB to compressed archive files
+                if current_height > 0 && current_height % 5000 == 0 {
+                    info!("Checking cold storage migration at block {}", current_height);
+                    let migrated = chain.migrate_cold_storage();
+                    if migrated > 0 {
+                        info!("Cold storage: {} tx indexes archived, running post-migration compaction", migrated);
+                        chain.compact_storage();
+                    }
+                    if let Some(cs_stats) = chain.get_cold_storage_stats() {
+                        info!("Cold storage stats: {} shards, {} entries, {:.1} MB, cutoff block {}",
+                            cs_stats.total_shards, cs_stats.total_archived_entries,
+                            cs_stats.total_archive_size_mb, cs_stats.cutoff_height);
+                    }
+                }
+                
                 // Distribute staking rewards every block
                 {
                     let mut staking = mining_staking.write().await;

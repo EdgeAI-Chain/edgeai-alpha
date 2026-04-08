@@ -445,6 +445,27 @@ impl Storage {
         }
     }
     
+    /// Expose the underlying RocksDB handle for cold storage migration
+    pub fn get_db(&self) -> &DB {
+        &self.db
+    }
+    
+    /// Get the cold storage cutoff height from metadata
+    pub fn get_cold_storage_cutoff(&self) -> u64 {
+        let cf = match self.db.cf_handle(CF_METADATA) {
+            Some(cf) => cf,
+            None => return 0,
+        };
+        self.get_u64(cf, b"cold_storage_cutoff").unwrap_or(0)
+    }
+    
+    /// Set the cold storage cutoff height in metadata
+    pub fn set_cold_storage_cutoff(&self, height: u64) {
+        if let Some(cf) = self.db.cf_handle(CF_METADATA) {
+            let _ = self.db.put_cf(cf, b"cold_storage_cutoff", height.to_be_bytes());
+        }
+    }
+    
     // Helper methods
     fn get_u64(&self, cf: &rocksdb::ColumnFamily, key: &[u8]) -> Option<u64> {
         match self.db.get_cf(cf, key) {

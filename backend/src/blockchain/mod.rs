@@ -8,6 +8,7 @@ pub mod transaction;
 pub mod chain;
 pub mod mempool;
 pub mod storage;
+pub mod cold_storage;
 
 // Core blockchain exports - only export what's actually used externally
 pub use block::Block;
@@ -15,3 +16,4 @@ pub use transaction::{Transaction, TransactionType};
 pub use chain::Blockchain;
 pub use mempool::MempoolManager;
 pub use storage::DbStats;
+pub use cold_storage::{ColdStorage, ColdStorageStats};

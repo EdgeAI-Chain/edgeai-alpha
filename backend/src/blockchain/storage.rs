@@ -64,30 +64,45 @@ impl Storage {
             CF_ACCOUNTS, CF_DATA_REGISTRY, CF_METADATA
         ];
         
-        // Try to open existing DB with column families
+        // With create_missing_column_families(true), open_cf will:
+        // - Open existing DB and create any missing CFs
+        // - Create new DB with all CFs if it doesn't exist
+        // This handles both fresh installs and existing databases correctly.
         let db = match DB::open_cf(&opts, &db_path, &cf_names) {
-            Ok(db) => db,
-            Err(_) => {
-                // Create new DB with column families
-                info!("Creating new RocksDB database at {:?}", db_path);
-                let db = DB::open(&opts, &db_path)
-                    .map_err(|e| format!("Failed to open RocksDB: {}", e))?;
+            Ok(db) => {
+                info!("RocksDB opened successfully at {:?}", db_path);
+                db
+            }
+            Err(e) => {
+                // If open_cf fails on an existing DB, try listing existing CFs
+                // and open with the union of existing + required CFs
+                info!("Initial open_cf failed ({}), attempting recovery...", e);
                 
-                // Create column families
-                for cf_name in &cf_names {
-                    if db.cf_handle(cf_name).is_none() {
-                        // Column family will be created on next open
+                match DB::list_cf(&opts, &db_path) {
+                    Ok(existing_cfs) => {
+                        info!("Found existing column families: {:?}", existing_cfs);
+                        // Merge existing CFs with our required CFs
+                        let mut all_cfs: Vec<String> = existing_cfs;
+                        for cf in &cf_names {
+                            let cf_str = cf.to_string();
+                            if !all_cfs.contains(&cf_str) {
+                                all_cfs.push(cf_str);
+                            }
+                        }
+                        DB::open_cf(&opts, &db_path, &all_cfs)
+                            .map_err(|e2| format!("Failed to open RocksDB with merged CFs: {}", e2))?
+                    }
+                    Err(_) => {
+                        // DB doesn't exist yet, create fresh
+                        info!("Creating new RocksDB database at {:?}", db_path);
+                        DB::open_cf(&opts, &db_path, &cf_names)
+                            .map_err(|e2| format!("Failed to create new RocksDB: {}", e2))?
                     }
                 }
-                
-                // Reopen with column families
-                drop(db);
-                DB::open_cf(&opts, &db_path, &cf_names)
-                    .map_err(|e| format!("Failed to open RocksDB with CFs: {}", e))?
             }
         };
         
-        info!("RocksDB storage opened at {:?}", db_path);
+        info!("RocksDB storage ready at {:?}", db_path);
         
         Ok(Storage {
             db,

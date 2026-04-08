@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-use rocksdb::{DB, Options, WriteBatch};
+use rocksdb::{DB, IteratorMode, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
 use log::info;
 use std::path::Path;
@@ -474,6 +474,59 @@ impl Storage {
             }
             _ => None
         }
+    }
+    
+    /// Debug: sample the first N keys from blocks CF and attempt to read specific block indices
+    pub fn debug_blocks_cf(&self, sample_count: usize, test_indices: &[u64]) -> Vec<String> {
+        let mut results: Vec<String> = Vec::new();
+        
+        // 1. Iterate first N keys from blocks CF
+        if let Some(cf) = self.db.cf_handle(CF_BLOCKS) {
+            let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+            let mut count = 0;
+            for item in iter {
+                if count >= sample_count { break; }
+                match item {
+                    Ok((key, value)) => {
+                        let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        let key_len = key.len();
+                        let val_len = value.len();
+                        // Try to interpret as u64 big-endian
+                        let as_u64 = if key_len == 8 {
+                            let arr: [u8; 8] = key[..8].try_into().unwrap_or([0u8; 8]);
+                            format!("u64={}", u64::from_be_bytes(arr))
+                        } else {
+                            format!("not_u64(len={})", key_len)
+                        };
+                        results.push(format!("iter[{}]: key_hex={}, key_len={}, val_len={}, {}", count, key_hex, key_len, val_len, as_u64));
+                    }
+                    Err(e) => {
+                        results.push(format!("iter[{}]: ERROR={}", count, e));
+                    }
+                }
+                count += 1;
+            }
+            results.push(format!("blocks_cf_iter: found {} keys in first {} attempts", count, sample_count));
+        } else {
+            results.push("blocks_cf: NOT FOUND".to_string());
+        }
+        
+        // 2. Try to read specific block indices
+        for &idx in test_indices {
+            let key = idx.to_be_bytes();
+            let found = if let Some(cf) = self.db.cf_handle(CF_BLOCKS) {
+                match self.db.get_cf(&cf, &key) {
+                    Ok(Some(data)) => format!("block[{}]: FOUND, {} bytes", idx, data.len()),
+                    Ok(None) => format!("block[{}]: NOT_FOUND", idx),
+                    Err(e) => format!("block[{}]: ERROR={}", idx, e),
+                }
+            } else {
+                format!("block[{}]: CF_NOT_FOUND", idx)
+            };
+            results.push(found);
+        }
+        
+        results
     }
     
     fn get_i64(&self, cf: &rocksdb::ColumnFamily, key: &[u8]) -> Option<i64> {

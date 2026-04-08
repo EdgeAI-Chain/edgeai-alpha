@@ -714,5 +714,16 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/api/network/peers", web::get().to(get_peers))
         
         // Maintenance routes
-        .route("/api/maintenance/cold-migrate", web::post().to(trigger_cold_migration));
+        .route("/api/maintenance/cold-migrate", web::post().to(trigger_cold_migration))
+        .route("/api/maintenance/debug-blocks-cf", web::get().to(debug_blocks_cf));
+}
+
+/// Debug: sample blocks CF keys to diagnose cold storage migration issues
+pub async fn debug_blocks_cf(data: web::Data<AppState>) -> impl Responder {
+    let blockchain = data.blockchain.read().await;
+    let debug_info = blockchain.debug_blocks_cf();
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "blocks_cf_debug": debug_info
+    }))
 }

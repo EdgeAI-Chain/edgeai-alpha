@@ -742,6 +742,14 @@ impl Blockchain {
         self.cold_storage.as_ref().map(|cs| cs.get_stats(self.cold_storage_cutoff))
     }
     
+    /// Debug: sample blocks CF keys for diagnostics
+    pub fn debug_blocks_cf(&self) -> Vec<String> {
+        match &self.storage {
+            Some(s) => s.debug_blocks_cf(5, &[0, 1, 100, 1000, 10000]),
+            None => vec!["storage=None".to_string()],
+        }
+    }
+    
     /// Get the latest block
     pub fn latest_block(&self) -> &Block {
         self.chain.last().unwrap()

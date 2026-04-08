@@ -679,39 +679,49 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
         *status = format!("RUNNING: started at height {}", height);
     }
     
-    // Spawn background task for the actual migration
+    // Spawn on a dedicated OS thread to avoid blocking the tokio async runtime.
+    // The migration scans ~1.7GB of RocksDB data synchronously, which would starve
+    // the tokio worker pool if run inside tokio::spawn.
+    let handle = tokio::runtime::Handle::current();
     let status_arc2 = status_arc.clone();
-    tokio::spawn(async move {
-        info!("Background cold storage migration: acquiring write lock...");
-        {
+    std::thread::Builder::new()
+        .name("cold-migration".into())
+        .spawn(move || {
+            info!("Background cold storage migration thread started");
+            {
+                let mut status = status_arc2.lock().unwrap();
+                *status = format!("RUNNING: acquiring write lock at height {}", height);
+            }
+            
+            // Use the main tokio runtime handle to acquire the async write lock
+            let mut blockchain = handle.block_on(blockchain_arc.write());
+            
+            {
+                let mut status = status_arc2.lock().unwrap();
+                *status = format!("RUNNING: write lock acquired, migrating at height {}", height);
+            }
+            info!("Background cold storage migration: write lock acquired, starting migration...");
+            
+            let (migrated, debug_msg) = blockchain.migrate_cold_storage();
+            info!("Background cold storage migration finished: {}", debug_msg);
+            
+            let result_msg = if migrated > 0 {
+                info!("Running post-migration compaction...");
+                blockchain.compact_storage();
+                info!("Post-migration compaction complete");
+                format!("DONE: migrated={} | {}", migrated, debug_msg)
+            } else {
+                format!("DONE: migrated=0 | {}", debug_msg)
+            };
+            
+            // Release the write lock before updating status
+            drop(blockchain);
+            
+            info!("Migration final result: {}", result_msg);
             let mut status = status_arc2.lock().unwrap();
-            *status = format!("RUNNING: acquiring write lock at height {}", height);
-        }
-        
-        let mut blockchain = blockchain_arc.write().await;
-        
-        {
-            let mut status = status_arc2.lock().unwrap();
-            *status = format!("RUNNING: write lock acquired, migrating at height {}", height);
-        }
-        info!("Background cold storage migration: write lock acquired, starting migration...");
-        
-        let (migrated, debug_msg) = blockchain.migrate_cold_storage();
-        info!("Background cold storage migration finished: {}", debug_msg);
-        
-        let result_msg = if migrated > 0 {
-            info!("Running post-migration compaction...");
-            blockchain.compact_storage();
-            info!("Post-migration compaction complete");
-            format!("DONE: migrated={} | {}", migrated, debug_msg)
-        } else {
-            format!("DONE: migrated=0 | {}", debug_msg)
-        };
-        
-        info!("Migration final result: {}", result_msg);
-        let mut status = status_arc2.lock().unwrap();
-        *status = result_msg;
-    });
+            *status = result_msg;
+        })
+        .expect("Failed to spawn migration thread");
     
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,

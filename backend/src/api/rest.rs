@@ -640,7 +640,7 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
     let has_storage = blockchain.has_storage();
     let has_cold_storage = blockchain.has_cold_storage();
     info!("Manual cold storage migration triggered at height {}, storage={}, cold_storage={}", height, has_storage, has_cold_storage);
-    let migrated = blockchain.migrate_cold_storage();
+    let (migrated, debug_msg) = blockchain.migrate_cold_storage();
     
     let cold_stats = blockchain.get_cold_storage_stats();
     let db_stats = blockchain.get_db_stats();
@@ -660,7 +660,8 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
         })),
         "debug": {
             "has_storage": has_storage,
-            "has_cold_storage": has_cold_storage
+            "has_cold_storage": has_cold_storage,
+            "migration_trace": debug_msg
         }
     }))
 }

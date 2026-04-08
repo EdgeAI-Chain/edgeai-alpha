@@ -694,43 +694,45 @@ impl Blockchain {
     }
     
     /// Should be called periodically from the mining loop.
-    /// Returns the number of entries migrated (0 if nothing to do).
-    pub fn migrate_cold_storage(&mut self) -> u64 {
+    /// Returns (migrated_count, debug_message).
+    pub fn migrate_cold_storage(&mut self) -> (u64, String) {
         let current_height = self.total_blocks;
         let current_cutoff = self.cold_storage_cutoff;
         
         let (cold, storage) = match (&mut self.cold_storage, &self.storage) {
             (Some(c), Some(s)) => (c, s),
             _ => {
-                info!("Cold storage or RocksDB not available, skipping migration");
-                return 0;
+                let msg = format!("cold_storage={}, storage={}", self.cold_storage.is_some(), self.storage.is_some());
+                return (0, format!("NOT_AVAILABLE: {}", msg));
             }
         };
         
-        match cold.migrate_from_rocksdb(storage.get_db(), current_height, current_cutoff) {
+        let db = storage.get_db();
+        let has_tx_cf = db.cf_handle("transactions").is_some();
+        let has_blocks_cf = db.cf_handle("blocks").is_some();
+        let pre_debug = format!("height={}, cutoff={}, has_tx_cf={}, has_blocks_cf={}", 
+            current_height, current_cutoff, has_tx_cf, has_blocks_cf);
+        
+        match cold.migrate_from_rocksdb(db, current_height, current_cutoff) {
             Ok(migrated) => {
                 if migrated > 0 {
-                    // Update cutoff height
                     let new_cutoff = if current_height > 50_000 {
                         ((current_height - 50_000) / 10_000) * 10_000
                     } else {
                         0
                     };
                     self.cold_storage_cutoff = new_cutoff;
-                    
-                    // Persist cutoff to RocksDB metadata
                     if let Some(ref s) = self.storage {
                         s.set_cold_storage_cutoff(new_cutoff);
                     }
-                    
                     info!("Cold storage migration: {} entries archived, cutoff now at block {}",
                           migrated, new_cutoff);
                 }
-                migrated
+                (migrated, format!("OK: {} | migrated={}", pre_debug, migrated))
             }
             Err(e) => {
                 error!("Cold storage migration failed: {}", e);
-                0
+                (0, format!("ERROR: {} | err={}", pre_debug, e))
             }
         }
     }

@@ -369,7 +369,7 @@ async fn main() -> std::io::Result<()> {
                 // Migrates old tx indexes from RocksDB to compressed archive files
                 if current_height > 0 && current_height % 5000 == 0 {
                     info!("Checking cold storage migration at block {}", current_height);
-                    let migrated = chain.migrate_cold_storage();
+                    let (migrated, _debug) = chain.migrate_cold_storage();
                     if migrated > 0 {
                         info!("Cold storage: {} tx indexes archived, running post-migration compaction", migrated);
                         chain.compact_storage();

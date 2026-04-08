@@ -168,17 +168,25 @@ impl ColdStorage {
         current_height: u64,
         current_cutoff: u64,
     ) -> Result<u64, String> {
+        info!(
+            "migrate_from_rocksdb ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
+            current_height, current_cutoff, KEEP_HOT_BLOCKS, SHARD_SIZE
+        );
+        
         // Calculate the new cutoff: keep the most recent KEEP_HOT_BLOCKS in RocksDB
         let target_cutoff = if current_height > KEEP_HOT_BLOCKS {
             current_height - KEEP_HOT_BLOCKS
         } else {
+            info!("Chain too short for migration: height={} <= KEEP_HOT={}", current_height, KEEP_HOT_BLOCKS);
             return Ok(0); // Chain too short, nothing to migrate
         };
 
         // Align cutoff to shard boundaries
         let aligned_cutoff = (target_cutoff / SHARD_SIZE) * SHARD_SIZE;
+        info!("Migration calc: target_cutoff={}, aligned_cutoff={}, current_cutoff={}", target_cutoff, aligned_cutoff, current_cutoff);
 
         if aligned_cutoff <= current_cutoff {
+            info!("Nothing to migrate: aligned_cutoff={} <= current_cutoff={}", aligned_cutoff, current_cutoff);
             return Ok(0); // Nothing new to migrate
         }
 

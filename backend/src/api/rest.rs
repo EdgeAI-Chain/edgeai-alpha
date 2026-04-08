@@ -682,8 +682,20 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
     // Spawn background task for the actual migration
     let status_arc2 = status_arc.clone();
     tokio::spawn(async move {
-        info!("Background cold storage migration starting...");
+        info!("Background cold storage migration: acquiring write lock...");
+        {
+            let mut status = status_arc2.lock().unwrap();
+            *status = format!("RUNNING: acquiring write lock at height {}", height);
+        }
+        
         let mut blockchain = blockchain_arc.write().await;
+        
+        {
+            let mut status = status_arc2.lock().unwrap();
+            *status = format!("RUNNING: write lock acquired, migrating at height {}", height);
+        }
+        info!("Background cold storage migration: write lock acquired, starting migration...");
+        
         let (migrated, debug_msg) = blockchain.migrate_cold_storage();
         info!("Background cold storage migration finished: {}", debug_msg);
         
@@ -696,6 +708,7 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
             format!("DONE: migrated=0 | {}", debug_msg)
         };
         
+        info!("Migration final result: {}", result_msg);
         let mut status = status_arc2.lock().unwrap();
         *status = result_msg;
     });

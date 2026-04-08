@@ -633,36 +633,54 @@ fn get_disk_usage(path: &str) -> serde_json::Value {
 // ============ Maintenance Handlers ============
 
 /// Manually trigger cold storage migration (POST /api/maintenance/cold-migrate)
+/// Migration runs as a background task since scanning transactions CF can take minutes.
 pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder {
-    let mut blockchain = data.blockchain.write().await;
-    let height = blockchain.total_blocks;
+    let blockchain_arc = data.blockchain.clone();
     
-    let has_storage = blockchain.has_storage();
-    let has_cold_storage = blockchain.has_cold_storage();
-    info!("Manual cold storage migration triggered at height {}, storage={}, cold_storage={}", height, has_storage, has_cold_storage);
-    let (migrated, debug_msg) = blockchain.migrate_cold_storage();
+    // Quick pre-check with read lock
+    let (height, has_storage, has_cold_storage, cold_stats) = {
+        let blockchain = blockchain_arc.read().await;
+        (
+            blockchain.total_blocks,
+            blockchain.has_storage(),
+            blockchain.has_cold_storage(),
+            blockchain.get_cold_storage_stats(),
+        )
+    };
     
-    let cold_stats = blockchain.get_cold_storage_stats();
-    let db_stats = blockchain.get_db_stats();
+    if !has_storage || !has_cold_storage {
+        return HttpResponse::Ok().json(serde_json::json!({
+            "success": false,
+            "error": format!("Not available: storage={}, cold_storage={}", has_storage, has_cold_storage),
+            "chain_height": height
+        }));
+    }
+    
+    info!("Manual cold storage migration triggered at height {}", height);
+    
+    // Spawn background task for the actual migration
+    tokio::spawn(async move {
+        info!("Background cold storage migration starting...");
+        let mut blockchain = blockchain_arc.write().await;
+        let (migrated, debug_msg) = blockchain.migrate_cold_storage();
+        info!("Background cold storage migration finished: {}", debug_msg);
+        if migrated > 0 {
+            info!("Running post-migration compaction...");
+            blockchain.compact_storage();
+            info!("Post-migration compaction complete");
+        }
+    });
     
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
-        "migrated_entries": migrated,
+        "message": "Cold storage migration started in background. Check /api/status for progress.",
         "chain_height": height,
         "cold_storage": cold_stats.map(|cs| serde_json::json!({
             "cutoff_height": cs.cutoff_height,
             "total_shards": cs.total_shards,
             "total_archived_entries": cs.total_archived_entries,
             "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0
-        })),
-        "rocksdb": db_stats.map(|s| serde_json::json!({
-            "live_data_mb": (s.total_live_data_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
-        })),
-        "debug": {
-            "has_storage": has_storage,
-            "has_cold_storage": has_cold_storage,
-            "migration_trace": debug_msg
-        }
+        }))
     }))
 }
 

@@ -150,11 +150,15 @@ impl ColdStorage {
         Ok(())
     }
 
-    /// Migrate transaction indexes from RocksDB to cold storage (v2).
+    /// Migrate transaction indexes from RocksDB to cold storage (v3).
     ///
-    /// This method iterates the transactions CF directly (not blocks CF),
-    /// collecting entries whose block_index < aligned_cutoff into shard buckets,
-    /// writes compressed shard files, and deletes migrated entries from RocksDB.
+    /// **Memory-efficient streaming approach**: Instead of collecting all entries
+    /// into a giant HashMap (which caused OOM on 1GB VMs with 1.7GB of tx data),
+    /// this version processes one shard at a time:
+    ///   1. First pass: count entries per shard (lightweight — only stores counts)
+    ///   2. For each shard: re-scan, collect only that shard's entries, write, delete
+    ///
+    /// Peak memory = O(entries_in_one_shard) instead of O(all_eligible_entries).
     ///
     /// Returns the number of entries migrated.
     pub fn migrate_from_rocksdb(
@@ -164,7 +168,7 @@ impl ColdStorage {
         current_cutoff: u64,
     ) -> Result<u64, String> {
         info!(
-            "migrate_from_rocksdb v2 ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
+            "migrate_from_rocksdb v3 ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
             current_height, current_cutoff, KEEP_HOT_BLOCKS, SHARD_SIZE
         );
 
@@ -202,17 +206,16 @@ impl ColdStorage {
             }
         };
 
-        // Phase 1: Scan transactions CF and bucket entries by shard
-        info!("Phase 1: Scanning transactions CF for entries with block_index < {} ...", aligned_cutoff);
-        let mut shard_buckets: HashMap<u64, Vec<(Vec<u8>, ColdEntry)>> = HashMap::new();
+        // ── Pass 1: Lightweight scan to discover which shards need migration ──
+        info!("Pass 1: Counting entries per shard (block_index < {}) ...", aligned_cutoff);
+        let mut shard_counts: BTreeMap<u64, u64> = BTreeMap::new();
         let mut scanned: u64 = 0;
-        let mut eligible: u64 = 0;
         let mut parse_errors: u64 = 0;
         let mut skipped_hot: u64 = 0;
 
         let iter = db.iterator_cf(&cf_txs, rocksdb::IteratorMode::Start);
         for item in iter {
-            let (key, value) = match item {
+            let (_key, value) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
                     if parse_errors == 0 {
@@ -224,15 +227,10 @@ impl ColdStorage {
             };
             scanned += 1;
 
-            // Log progress every 1M entries
             if scanned % 1_000_000 == 0 {
-                info!(
-                    "  ... scanned {} entries, {} eligible, {} hot, {} errors",
-                    scanned, eligible, skipped_hot, parse_errors
-                );
+                info!("  pass1: scanned {} entries ...", scanned);
             }
 
-            // Deserialize the TxLocation
             let tx_loc: TxLocation = match serde_json::from_slice(&value) {
                 Ok(loc) => loc,
                 Err(_) => {
@@ -241,72 +239,89 @@ impl ColdStorage {
                 }
             };
 
-            // Check if this entry should be migrated
             if tx_loc.block_index >= aligned_cutoff {
                 skipped_hot += 1;
                 continue;
             }
 
-            // Determine which shard this entry belongs to
             let shard_start = (tx_loc.block_index / SHARD_SIZE) * SHARD_SIZE;
 
-            // Skip if this shard already exists in cold storage
+            // Skip shards that already exist in cold storage
             if self.shard_index.contains_key(&shard_start) {
-                // This entry's shard is already archived; skip but still count as eligible
-                eligible += 1;
                 continue;
             }
 
-            // Only migrate entries in the range [current_cutoff, aligned_cutoff)
-            if tx_loc.block_index < current_cutoff {
-                // Below current cutoff means it should already be in cold storage
-                // but shard doesn't exist — collect it anyway
-            }
-
-            let tx_hash = String::from_utf8_lossy(&key).to_string();
-            let entry = ColdEntry {
-                tx_hash,
-                block_index: tx_loc.block_index,
-                tx_index: tx_loc.tx_index,
-            };
-
-            shard_buckets
-                .entry(shard_start)
-                .or_default()
-                .push((key.to_vec(), entry));
-            eligible += 1;
+            *shard_counts.entry(shard_start).or_insert(0) += 1;
         }
 
         info!(
-            "Phase 1 complete: scanned={}, eligible={}, hot={}, errors={}, shards_to_write={}",
-            scanned, eligible, skipped_hot, parse_errors, shard_buckets.len()
+            "Pass 1 complete: scanned={}, hot={}, errors={}, shards_to_migrate={}",
+            scanned, skipped_hot, parse_errors, shard_counts.len()
         );
 
-        if shard_buckets.is_empty() {
+        if shard_counts.is_empty() {
             info!("No entries to migrate");
             return Ok(0);
         }
 
-        // Phase 2: Write shard files and delete entries from RocksDB
-        info!("Phase 2: Writing {} shard files ...", shard_buckets.len());
+        // Log shard summary
+        let total_eligible: u64 = shard_counts.values().sum();
+        info!(
+            "Will migrate {} entries across {} shards",
+            total_eligible, shard_counts.len()
+        );
+
+        // ── Pass 2+: Process one shard at a time ──
         let mut total_migrated: u64 = 0;
+        let shard_starts: Vec<u64> = shard_counts.keys().copied().collect();
 
-        // Sort shard keys for deterministic processing
-        let mut shard_keys: Vec<u64> = shard_buckets.keys().copied().collect();
-        shard_keys.sort();
-
-        for shard_start in shard_keys {
-            let bucket = match shard_buckets.remove(&shard_start) {
-                Some(b) => b,
-                None => continue,
-            };
-
+        for (shard_idx, &shard_start) in shard_starts.iter().enumerate() {
             let shard_end = shard_start + SHARD_SIZE;
-            let entry_count = bucket.len() as u64;
+            let expected_count = shard_counts[&shard_start];
 
-            // Separate keys and entries
-            let tx_keys: Vec<Vec<u8>> = bucket.iter().map(|(k, _)| k.clone()).collect();
-            let entries: Vec<ColdEntry> = bucket.into_iter().map(|(_, e)| e).collect();
+            info!(
+                "Shard {}/{}: processing blocks {}..{} (~{} entries)",
+                shard_idx + 1,
+                shard_starts.len(),
+                shard_start,
+                shard_end - 1,
+                expected_count
+            );
+
+            // Collect entries for this single shard
+            let mut entries: Vec<ColdEntry> = Vec::with_capacity(expected_count as usize);
+            let mut keys_to_delete: Vec<Vec<u8>> = Vec::with_capacity(expected_count as usize);
+
+            let iter = db.iterator_cf(&cf_txs, rocksdb::IteratorMode::Start);
+            for item in iter {
+                let (key, value) = match item {
+                    Ok(kv) => kv,
+                    Err(_) => continue,
+                };
+
+                let tx_loc: TxLocation = match serde_json::from_slice(&value) {
+                    Ok(loc) => loc,
+                    Err(_) => continue,
+                };
+
+                // Only collect entries belonging to this shard
+                if tx_loc.block_index >= shard_start && tx_loc.block_index < shard_end {
+                    let tx_hash = String::from_utf8_lossy(&key).to_string();
+                    entries.push(ColdEntry {
+                        tx_hash,
+                        block_index: tx_loc.block_index,
+                        tx_index: tx_loc.tx_index,
+                    });
+                    keys_to_delete.push(key.to_vec());
+                }
+            }
+
+            if entries.is_empty() {
+                info!("  Shard {}_{}: no entries found (already deleted?)", shard_start, shard_end - 1);
+                continue;
+            }
+
+            let entry_count = entries.len() as u64;
 
             // Write compressed shard file
             let shard_path = self
@@ -319,13 +334,21 @@ impl ColdStorage {
                 .map(|m| m.len())
                 .unwrap_or(0);
 
-            // Delete migrated entries from RocksDB transactions CF
-            let mut batch = rocksdb::WriteBatch::default();
-            for key in &tx_keys {
-                batch.delete_cf(&cf_txs, key);
+            // Drop entries to free memory before batch delete
+            drop(entries);
+
+            // Delete migrated entries from RocksDB in batches of 10,000
+            for chunk in keys_to_delete.chunks(10_000) {
+                let mut batch = rocksdb::WriteBatch::default();
+                for key in chunk {
+                    batch.delete_cf(&cf_txs, key);
+                }
+                db.write(batch)
+                    .map_err(|e| format!("Failed to delete migrated tx entries: {}", e))?;
             }
-            db.write(batch)
-                .map_err(|e| format!("Failed to delete migrated tx entries: {}", e))?;
+
+            // Free keys memory
+            drop(keys_to_delete);
 
             // Update shard index
             self.shard_index.insert(
@@ -340,7 +363,7 @@ impl ColdStorage {
             );
 
             info!(
-                "Shard {}_{}: {} entries, {:.2} MB compressed",
+                "  Shard {}_{}: {} entries, {:.2} MB compressed",
                 shard_start,
                 shard_end - 1,
                 entry_count,

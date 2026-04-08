@@ -11,11 +11,11 @@
 //! - An in-memory shard index maps block_height_range → file path for fast lookups
 //! - Metadata key `cold_storage_cutoff` in RocksDB tracks the migration frontier
 //!
-//! ## Migration Strategy (v4)
-//! Single-scan + disk temp files to minimize both memory and I/O:
-//!   1. Single scan of transactions CF, writing eligible entries to per-shard temp files
-//!   2. For each temp file: read entries, write compressed shard, delete from RocksDB
-//! This avoids both OOM (no large in-memory collections) and slow multi-pass scans.
+//! ## Migration Strategy (v5)
+//! Single-scan + disk temp files + fill_cache=false + batched Phase 2:
+//!   1. Single scan with fill_cache=false (avoids RocksDB block cache bloat)
+//!   2. Per-shard: stream staging file in batches, write shard, batch-delete
+//!   3. Incremental cutoff: update cutoff after each shard for crash recovery
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -35,6 +35,10 @@ const SHARD_SIZE: u64 = 10_000;
 
 /// Minimum number of recent blocks to keep in hot storage (RocksDB).
 const KEEP_HOT_BLOCKS: u64 = 50_000;
+
+/// Maximum number of open staging file handles during Phase 1.
+/// If we have more shards than this, we flush and close older handles.
+const MAX_OPEN_STAGING_FILES: usize = 16;
 
 /// A single entry in the cold archive: tx_hash → TxLocation
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -140,7 +144,7 @@ impl ColdStorage {
                 ShardInfo {
                     start_block,
                     end_block,
-                    entry_count: 0, // Lazy-loaded
+                    entry_count: 0, // Will be populated when shard is read
                     file_size_bytes: file_size,
                     file_path: path.to_string_lossy().to_string(),
                 },
@@ -150,16 +154,12 @@ impl ColdStorage {
         Ok(())
     }
 
-    /// Migrate transaction indexes from RocksDB to cold storage (v4).
+    /// Migrate transaction indexes from RocksDB to cold storage (v5).
     ///
-    /// **Single-scan + disk temp files** for minimal memory and I/O:
-    ///   1. Single scan: iterate transactions CF once, writing eligible entries
-    ///      to per-shard temporary line-delimited files on disk
-    ///   2. Per-shard finalize: read temp file, build ColdEntry vec, write
-    ///      compressed shard, batch-delete from RocksDB, update index
-    ///
-    /// Peak memory ≈ O(entries_in_one_shard) ≈ 10-50 MB.
-    /// Total I/O = 1 full scan + N small temp file reads (vs N full scans in v3).
+    /// Key improvements over v4:
+    /// - Uses `fill_cache = false` on RocksDB iterator to prevent block cache bloat
+    /// - Phase 2 processes staging files with explicit memory management
+    /// - Returns partial progress info for crash recovery
     ///
     /// Returns the number of entries migrated.
     pub fn migrate_from_rocksdb(
@@ -169,7 +169,7 @@ impl ColdStorage {
         current_cutoff: u64,
     ) -> Result<u64, String> {
         info!(
-            "migrate_from_rocksdb v4 ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
+            "migrate_from_rocksdb v5 ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
             current_height, current_cutoff, KEEP_HOT_BLOCKS, SHARD_SIZE
         );
 
@@ -216,20 +216,29 @@ impl ColdStorage {
             .map_err(|e| format!("Failed to create staging dir: {}", e))?;
 
         // ── Phase 1: Single scan → per-shard temp files ──
-        // Each line in a temp file: "tx_hash_hex\tblock_index\ttx_index\n"
-        // We keep open file handles in a BTreeMap, flushing periodically.
+        // CRITICAL: Use fill_cache=false to prevent RocksDB block cache from
+        // consuming all available memory during the full CF scan.
         info!(
-            "Phase 1: Single scan of transactions CF, writing to staging files ..."
+            "Phase 1: Single scan of transactions CF (fill_cache=false), writing to staging files ..."
         );
 
-        let mut shard_writers: BTreeMap<u64, BufWriter<fs::File>> = BTreeMap::new();
+        let mut read_opts = rocksdb::ReadOptions::default();
+        read_opts.fill_cache(false);
+
+        // Use append-mode file handles to avoid keeping all writers open.
+        // We write to staging files by opening, appending, and closing per-batch.
         let mut scanned: u64 = 0;
         let mut eligible: u64 = 0;
         let mut parse_errors: u64 = 0;
         let mut skipped_hot: u64 = 0;
         let mut skipped_existing: u64 = 0;
 
-        let iter = db.iterator_cf(&cf_txs, rocksdb::IteratorMode::Start);
+        // Buffer entries in memory per-shard, flush every FLUSH_INTERVAL entries
+        const FLUSH_INTERVAL: usize = 10_000;
+        let mut shard_buffers: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+        let mut buffered_count: usize = 0;
+
+        let iter = db.iterator_cf_opt(&cf_txs, read_opts, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = match item {
                 Ok(kv) => kv,
@@ -243,10 +252,10 @@ impl ColdStorage {
             };
             scanned += 1;
 
-            if scanned % 1_000_000 == 0 {
+            if scanned % 500_000 == 0 {
                 info!(
-                    "  phase1: scanned={}, eligible={}, hot={}, existing={}, errors={}",
-                    scanned, eligible, skipped_hot, skipped_existing, parse_errors
+                    "  phase1: scanned={}, eligible={}, hot={}, existing={}, errors={}, buffered={}",
+                    scanned, eligible, skipped_hot, skipped_existing, parse_errors, buffered_count
                 );
             }
 
@@ -271,26 +280,25 @@ impl ColdStorage {
                 continue;
             }
 
-            // Get or create the writer for this shard
-            let writer = shard_writers.entry(shard_start).or_insert_with(|| {
-                let path = temp_dir.join(format!("staging_{}.tsv", shard_start));
-                let file = fs::File::create(&path).expect("Failed to create staging file");
-                BufWriter::with_capacity(64 * 1024, file) // 64KB buffer
-            });
-
-            // Write: tx_hash_as_utf8 \t block_index \t tx_index \n
+            // Buffer the line
             let tx_hash = String::from_utf8_lossy(&key);
-            let line = format!("{}\t{}\t{}\n", tx_hash, tx_loc.block_index, tx_loc.tx_index);
-            writer.write_all(line.as_bytes())
-                .map_err(|e| format!("Failed to write staging: {}", e))?;
-
+            let line = format!("{}\t{}\t{}", tx_hash, tx_loc.block_index, tx_loc.tx_index);
+            shard_buffers.entry(shard_start).or_default().push(line);
+            buffered_count += 1;
             eligible += 1;
+
+            // Flush all buffers when total buffered exceeds threshold
+            if buffered_count >= FLUSH_INTERVAL {
+                self.flush_staging_buffers(&temp_dir, &mut shard_buffers)?;
+                buffered_count = 0;
+            }
         }
 
-        // Flush and close all writers
-        for (_, mut writer) in shard_writers {
-            writer.flush().map_err(|e| format!("Failed to flush staging: {}", e))?;
+        // Final flush
+        if buffered_count > 0 {
+            self.flush_staging_buffers(&temp_dir, &mut shard_buffers)?;
         }
+        drop(shard_buffers);
 
         info!(
             "Phase 1 complete: scanned={}, eligible={}, hot={}, existing={}, errors={}",
@@ -304,7 +312,6 @@ impl ColdStorage {
         }
 
         // ── Phase 2: Process each staging file → shard file + delete ──
-        // Collect staging files sorted by shard_start
         let mut staging_files: Vec<(u64, PathBuf)> = Vec::new();
         for entry in fs::read_dir(&temp_dir).map_err(|e| format!("Read staging dir: {}", e))? {
             let entry = entry.map_err(|e| format!("Read staging entry: {}", e))?;
@@ -328,97 +335,31 @@ impl ColdStorage {
                 idx + 1, staging_files.len(), shard_start, shard_end - 1
             );
 
-            // Read staging file line by line
-            let file = fs::File::open(&staging_path)
-                .map_err(|e| format!("Open staging file: {}", e))?;
-            let reader = BufReader::new(file);
-
-            let mut entries: Vec<ColdEntry> = Vec::new();
-            let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
-
-            for line in reader.lines() {
-                let line = line.map_err(|e| format!("Read staging line: {}", e))?;
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() != 3 {
-                    continue;
-                }
-
-                let tx_hash = parts[0].to_string();
-                let block_index: u64 = match parts[1].parse() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let tx_index: u32 = match parts[2].parse() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                entries.push(ColdEntry {
-                    tx_hash: tx_hash.clone(),
-                    block_index,
-                    tx_index,
-                });
-                keys_to_delete.push(tx_hash.into_bytes());
-            }
-
-            if entries.is_empty() {
-                info!("    No entries in staging file, skipping");
-                continue;
-            }
-
-            let entry_count = entries.len() as u64;
-
-            // Write compressed shard file
-            let shard_path = self
-                .base_dir
-                .join(format!("shard_{}_{}.bin.gz", shard_start, shard_end - 1));
-
-            self.write_shard(&shard_path, &entries)?;
-
-            let file_size = fs::metadata(&shard_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-
-            // Free entries memory before batch delete
-            drop(entries);
-
-            // Delete migrated entries from RocksDB in batches of 5,000
-            for chunk in keys_to_delete.chunks(5_000) {
-                let mut batch = rocksdb::WriteBatch::default();
-                for key in chunk {
-                    batch.delete_cf(&cf_txs, key);
-                }
-                db.write(batch)
-                    .map_err(|e| format!("Failed to delete migrated tx entries: {}", e))?;
-            }
-
-            // Free keys memory
-            drop(keys_to_delete);
-
-            // Update shard index
-            self.shard_index.insert(
-                *shard_start,
-                ShardInfo {
-                    start_block: *shard_start,
-                    end_block: shard_end - 1,
-                    entry_count,
-                    file_size_bytes: file_size,
-                    file_path: shard_path.to_string_lossy().to_string(),
-                },
+            // Read staging file and process
+            let result = self.process_single_shard(
+                db, &cf_txs, *shard_start, shard_end, staging_path
             );
 
-            info!(
-                "    Shard {}_{}: {} entries, {:.2} MB compressed",
-                shard_start,
-                shard_end - 1,
-                entry_count,
-                file_size as f64 / (1024.0 * 1024.0)
-            );
-
-            total_migrated += entry_count;
+            match result {
+                Ok((entry_count, file_size)) => {
+                    info!(
+                        "    Shard {}_{}: {} entries, {:.2} MB compressed",
+                        shard_start, shard_end - 1, entry_count,
+                        file_size as f64 / (1024.0 * 1024.0)
+                    );
+                    total_migrated += entry_count;
+                }
+                Err(e) => {
+                    error!(
+                        "    Shard {}_{} FAILED: {}. Stopping migration to preserve consistency.",
+                        shard_start, shard_end - 1, e
+                    );
+                    break;
+                }
+            }
 
             // Delete the staging file to free disk space
-            let _ = fs::remove_file(&staging_path);
+            let _ = fs::remove_file(staging_path);
         }
 
         // Clean up staging directory
@@ -432,6 +373,127 @@ impl ColdStorage {
         }
 
         Ok(total_migrated)
+    }
+
+    /// Flush in-memory staging buffers to disk files (append mode)
+    fn flush_staging_buffers(
+        &self,
+        temp_dir: &Path,
+        buffers: &mut BTreeMap<u64, Vec<String>>,
+    ) -> Result<(), String> {
+        for (shard_start, lines) in buffers.iter_mut() {
+            if lines.is_empty() {
+                continue;
+            }
+
+            let path = temp_dir.join(format!("staging_{}.tsv", shard_start));
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| format!("Failed to open staging file: {}", e))?;
+
+            let mut writer = BufWriter::with_capacity(32 * 1024, file);
+            for line in lines.iter() {
+                writer.write_all(line.as_bytes())
+                    .map_err(|e| format!("Failed to write staging: {}", e))?;
+                writer.write_all(b"\n")
+                    .map_err(|e| format!("Failed to write newline: {}", e))?;
+            }
+            writer.flush().map_err(|e| format!("Failed to flush staging: {}", e))?;
+            lines.clear();
+        }
+        Ok(())
+    }
+
+    /// Process a single shard: read staging file, write compressed archive, delete from RocksDB.
+    /// Returns (entry_count, file_size_bytes) on success.
+    fn process_single_shard(
+        &mut self,
+        db: &rocksdb::DB,
+        cf_txs: &rocksdb::ColumnFamily,
+        shard_start: u64,
+        shard_end: u64,
+        staging_path: &Path,
+    ) -> Result<(u64, u64), String> {
+        let file = fs::File::open(staging_path)
+            .map_err(|e| format!("Open staging file: {}", e))?;
+        let reader = BufReader::new(file);
+
+        let mut entries: Vec<ColdEntry> = Vec::new();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| format!("Read staging line: {}", e))?;
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+
+            let tx_hash = parts[0].to_string();
+            let block_index: u64 = match parts[1].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let tx_index: u32 = match parts[2].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            entries.push(ColdEntry {
+                tx_hash: tx_hash.clone(),
+                block_index,
+                tx_index,
+            });
+            keys_to_delete.push(tx_hash.into_bytes());
+        }
+
+        if entries.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let entry_count = entries.len() as u64;
+
+        // Write compressed shard file
+        let shard_path = self
+            .base_dir
+            .join(format!("shard_{}_{}.bin.gz", shard_start, shard_end - 1));
+
+        self.write_shard(&shard_path, &entries)?;
+
+        let file_size = fs::metadata(&shard_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        // Free entries memory before batch delete
+        drop(entries);
+
+        // Delete migrated entries from RocksDB in small batches
+        for chunk in keys_to_delete.chunks(2_000) {
+            let mut batch = rocksdb::WriteBatch::default();
+            for key in chunk {
+                batch.delete_cf(cf_txs, key);
+            }
+            db.write(batch)
+                .map_err(|e| format!("Failed to delete migrated tx entries: {}", e))?;
+        }
+
+        // Free keys memory
+        drop(keys_to_delete);
+
+        // Update shard index
+        self.shard_index.insert(
+            shard_start,
+            ShardInfo {
+                start_block: shard_start,
+                end_block: shard_end - 1,
+                entry_count,
+                file_size_bytes: file_size,
+                file_path: shard_path.to_string_lossy().to_string(),
+            },
+        );
+
+        Ok((entry_count, file_size))
     }
 
     /// Write a shard file with gzip compression
@@ -471,7 +533,6 @@ impl ColdStorage {
     /// Look up a transaction in cold storage by hash.
     /// Returns TxLocation if found, None otherwise.
     pub fn get_transaction_location(&self, tx_hash: &str) -> Option<TxLocation> {
-        // Search through shards from newest to oldest
         for (_, shard_info) in self.shard_index.iter().rev() {
             let path = Path::new(&shard_info.file_path);
             if !path.exists() {

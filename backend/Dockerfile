@@ -2,7 +2,7 @@
 # Multi-stage build for optimized image size
 
 # Stage 1: Build
-FROM rust:1.85-bookworm as builder
+FROM rust:bookworm as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \

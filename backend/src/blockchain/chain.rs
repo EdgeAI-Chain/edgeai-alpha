@@ -683,6 +683,16 @@ impl Blockchain {
     }
     
     /// Run cold storage migration: move old tx indexes from RocksDB to compressed archives.
+    /// Debug: check if storage is available
+    pub fn has_storage(&self) -> bool {
+        self.storage.is_some()
+    }
+    
+    /// Debug: check if cold storage is available
+    pub fn has_cold_storage(&self) -> bool {
+        self.cold_storage.is_some()
+    }
+    
     /// Should be called periodically from the mining loop.
     /// Returns the number of entries migrated (0 if nothing to do).
     pub fn migrate_cold_storage(&mut self) -> u64 {

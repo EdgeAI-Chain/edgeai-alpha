@@ -637,7 +637,9 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
     let mut blockchain = data.blockchain.write().await;
     let height = blockchain.total_blocks;
     
-    info!("Manual cold storage migration triggered at height {}", height);
+    let has_storage = blockchain.has_storage();
+    let has_cold_storage = blockchain.has_cold_storage();
+    info!("Manual cold storage migration triggered at height {}, storage={}, cold_storage={}", height, has_storage, has_cold_storage);
     let migrated = blockchain.migrate_cold_storage();
     
     let cold_stats = blockchain.get_cold_storage_stats();
@@ -655,7 +657,11 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
         })),
         "rocksdb": db_stats.map(|s| serde_json::json!({
             "live_data_mb": (s.total_live_data_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
-        }))
+        })),
+        "debug": {
+            "has_storage": has_storage,
+            "has_cold_storage": has_cold_storage
+        }
     }))
 }
 

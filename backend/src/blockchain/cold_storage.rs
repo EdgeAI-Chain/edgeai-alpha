@@ -7,11 +7,17 @@
 //! ## Architecture
 //! - Archives are organized by block height ranges (shards of SHARD_SIZE blocks)
 //! - Each shard file: `/data/cold_tx/shard_{start}_{end}.bin.gz`
-//! - Format: gzip-compressed bincode of Vec<(String, TxLocation)>
+//! - Format: gzip-compressed bincode of Vec<ColdEntry>
 //! - An in-memory shard index maps block_height_range → file path for fast lookups
 //! - Metadata key `cold_storage_cutoff` in RocksDB tracks the migration frontier
+//!
+//! ## Migration Strategy (v2)
+//! Instead of reading blocks CF (which may have been compacted away), we iterate
+//! the transactions CF directly. Each entry is `tx_hash -> TxLocation { block_index, tx_index }`.
+//! We deserialize TxLocation to determine which shard each tx belongs to, collect
+//! entries by shard, write shard files, then delete migrated entries from RocksDB.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,11 +31,9 @@ use serde::{Deserialize, Serialize};
 use super::storage::TxLocation;
 
 /// Number of blocks per cold storage shard file.
-/// 10,000 blocks × ~40 tx/block × ~80 bytes/entry ≈ 32 MB uncompressed → ~4-8 MB compressed
 const SHARD_SIZE: u64 = 10_000;
 
 /// Minimum number of recent blocks to keep in hot storage (RocksDB).
-/// Transactions in the most recent KEEP_HOT_BLOCKS blocks are never migrated.
 const KEEP_HOT_BLOCKS: u64 = 50_000;
 
 /// A single entry in the cold archive: tx_hash → TxLocation
@@ -64,9 +68,7 @@ pub struct ColdStorageStats {
 
 /// Cold storage engine for transaction indexes
 pub struct ColdStorage {
-    /// Base directory for cold storage files
     base_dir: PathBuf,
-    /// In-memory index: shard_start_block → ShardInfo
     shard_index: BTreeMap<u64, ShardInfo>,
 }
 
@@ -75,7 +77,6 @@ impl ColdStorage {
     pub fn open(data_dir: &str) -> Result<Self, String> {
         let base_dir = Path::new(data_dir).join("cold_tx");
 
-        // Create directory if it doesn't exist
         fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Failed to create cold storage dir: {}", e))?;
 
@@ -84,7 +85,6 @@ impl ColdStorage {
             shard_index: BTreeMap::new(),
         };
 
-        // Scan existing shard files to rebuild the in-memory index
         cs.rebuild_index()?;
 
         info!(
@@ -110,7 +110,6 @@ impl ColdStorage {
                 None => continue,
             };
 
-            // Parse shard filename: shard_{start}_{end}.bin.gz
             if !fname.starts_with("shard_") || !fname.ends_with(".bin.gz") {
                 continue;
             }
@@ -136,8 +135,6 @@ impl ColdStorage {
 
             let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
-            // Read entry count from the file header (first 8 bytes after decompression)
-            // For efficiency, we store entry_count = 0 here and update on first access
             self.shard_index.insert(
                 start_block,
                 ShardInfo {
@@ -153,13 +150,11 @@ impl ColdStorage {
         Ok(())
     }
 
-    /// Migrate transaction indexes from RocksDB to cold storage.
+    /// Migrate transaction indexes from RocksDB to cold storage (v2).
     ///
-    /// This method:
-    /// 1. Determines which block ranges are eligible for migration
-    /// 2. Reads tx indexes from RocksDB for those ranges
-    /// 3. Writes compressed shard files
-    /// 4. Deletes the migrated entries from RocksDB
+    /// This method iterates the transactions CF directly (not blocks CF),
+    /// collecting entries whose block_index < aligned_cutoff into shard buckets,
+    /// writes compressed shard files, and deletes migrated entries from RocksDB.
     ///
     /// Returns the number of entries migrated.
     pub fn migrate_from_rocksdb(
@@ -169,31 +164,35 @@ impl ColdStorage {
         current_cutoff: u64,
     ) -> Result<u64, String> {
         info!(
-            "migrate_from_rocksdb ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
+            "migrate_from_rocksdb v2 ENTRY: height={}, cutoff={}, KEEP_HOT={}, SHARD_SIZE={}",
             current_height, current_cutoff, KEEP_HOT_BLOCKS, SHARD_SIZE
         );
-        
-        // Calculate the new cutoff: keep the most recent KEEP_HOT_BLOCKS in RocksDB
+
+        // Calculate the new cutoff
         let target_cutoff = if current_height > KEEP_HOT_BLOCKS {
             current_height - KEEP_HOT_BLOCKS
         } else {
-            info!("Chain too short for migration: height={} <= KEEP_HOT={}", current_height, KEEP_HOT_BLOCKS);
-            return Ok(0); // Chain too short, nothing to migrate
+            info!(
+                "Chain too short for migration: height={} <= KEEP_HOT={}",
+                current_height, KEEP_HOT_BLOCKS
+            );
+            return Ok(0);
         };
 
         // Align cutoff to shard boundaries
         let aligned_cutoff = (target_cutoff / SHARD_SIZE) * SHARD_SIZE;
-        info!("Migration calc: target_cutoff={}, aligned_cutoff={}, current_cutoff={}", target_cutoff, aligned_cutoff, current_cutoff);
+        info!(
+            "Migration calc: target_cutoff={}, aligned_cutoff={}, current_cutoff={}",
+            target_cutoff, aligned_cutoff, current_cutoff
+        );
 
         if aligned_cutoff <= current_cutoff {
-            info!("Nothing to migrate: aligned_cutoff={} <= current_cutoff={}", aligned_cutoff, current_cutoff);
-            return Ok(0); // Nothing new to migrate
+            info!(
+                "Nothing to migrate: aligned_cutoff={} <= current_cutoff={}",
+                aligned_cutoff, current_cutoff
+            );
+            return Ok(0);
         }
-
-        info!(
-            "Cold storage migration: current_cutoff={}, target_cutoff={}, aligned={}, height={}",
-            current_cutoff, target_cutoff, aligned_cutoff, current_height
-        );
 
         let cf_txs = match db.cf_handle("transactions") {
             Some(cf) => cf,
@@ -202,92 +201,112 @@ impl ColdStorage {
                 return Err("CF_TRANSACTIONS not found".to_string());
             }
         };
-        let cf_blocks = match db.cf_handle("blocks") {
-            Some(cf) => cf,
-            None => {
-                error!("Cold storage: CF_BLOCKS not found in DB");
-                return Err("CF_BLOCKS not found".to_string());
-            }
-        };
 
+        // Phase 1: Scan transactions CF and bucket entries by shard
+        info!("Phase 1: Scanning transactions CF for entries with block_index < {} ...", aligned_cutoff);
+        let mut shard_buckets: HashMap<u64, Vec<(Vec<u8>, ColdEntry)>> = HashMap::new();
+        let mut scanned: u64 = 0;
+        let mut eligible: u64 = 0;
+        let mut parse_errors: u64 = 0;
+        let mut skipped_hot: u64 = 0;
+
+        let iter = db.iterator_cf(&cf_txs, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = match item {
+                Ok(kv) => kv,
+                Err(e) => {
+                    if parse_errors == 0 {
+                        warn!("Cold storage: iterator error: {}", e);
+                    }
+                    parse_errors += 1;
+                    continue;
+                }
+            };
+            scanned += 1;
+
+            // Log progress every 1M entries
+            if scanned % 1_000_000 == 0 {
+                info!(
+                    "  ... scanned {} entries, {} eligible, {} hot, {} errors",
+                    scanned, eligible, skipped_hot, parse_errors
+                );
+            }
+
+            // Deserialize the TxLocation
+            let tx_loc: TxLocation = match serde_json::from_slice(&value) {
+                Ok(loc) => loc,
+                Err(_) => {
+                    parse_errors += 1;
+                    continue;
+                }
+            };
+
+            // Check if this entry should be migrated
+            if tx_loc.block_index >= aligned_cutoff {
+                skipped_hot += 1;
+                continue;
+            }
+
+            // Determine which shard this entry belongs to
+            let shard_start = (tx_loc.block_index / SHARD_SIZE) * SHARD_SIZE;
+
+            // Skip if this shard already exists in cold storage
+            if self.shard_index.contains_key(&shard_start) {
+                // This entry's shard is already archived; skip but still count as eligible
+                eligible += 1;
+                continue;
+            }
+
+            // Only migrate entries in the range [current_cutoff, aligned_cutoff)
+            if tx_loc.block_index < current_cutoff {
+                // Below current cutoff means it should already be in cold storage
+                // but shard doesn't exist — collect it anyway
+            }
+
+            let tx_hash = String::from_utf8_lossy(&key).to_string();
+            let entry = ColdEntry {
+                tx_hash,
+                block_index: tx_loc.block_index,
+                tx_index: tx_loc.tx_index,
+            };
+
+            shard_buckets
+                .entry(shard_start)
+                .or_default()
+                .push((key.to_vec(), entry));
+            eligible += 1;
+        }
+
+        info!(
+            "Phase 1 complete: scanned={}, eligible={}, hot={}, errors={}, shards_to_write={}",
+            scanned, eligible, skipped_hot, parse_errors, shard_buckets.len()
+        );
+
+        if shard_buckets.is_empty() {
+            info!("No entries to migrate");
+            return Ok(0);
+        }
+
+        // Phase 2: Write shard files and delete entries from RocksDB
+        info!("Phase 2: Writing {} shard files ...", shard_buckets.len());
         let mut total_migrated: u64 = 0;
 
-        // Process each shard range that needs migration
-        let mut shard_start = (current_cutoff / SHARD_SIZE) * SHARD_SIZE;
-        while shard_start < aligned_cutoff {
+        // Sort shard keys for deterministic processing
+        let mut shard_keys: Vec<u64> = shard_buckets.keys().copied().collect();
+        shard_keys.sort();
+
+        for shard_start in shard_keys {
+            let bucket = match shard_buckets.remove(&shard_start) {
+                Some(b) => b,
+                None => continue,
+            };
+
             let shard_end = shard_start + SHARD_SIZE;
+            let entry_count = bucket.len() as u64;
 
-            // Skip if this shard already exists
-            if self.shard_index.contains_key(&shard_start) {
-                shard_start = shard_end;
-                continue;
-            }
-
-            info!(
-                "Migrating shard: blocks {} to {} ...",
-                shard_start,
-                shard_end - 1
-            );
-
-            // Collect all tx entries for blocks in this range
-            let mut entries: Vec<ColdEntry> = Vec::new();
-            let mut tx_keys_to_delete: Vec<Vec<u8>> = Vec::new();
-            let mut blocks_found: u64 = 0;
-            let mut blocks_missing: u64 = 0;
-            let mut deserialize_errors: u64 = 0;
-
-            for block_idx in shard_start..shard_end {
-                // Read the block from RocksDB to get its transactions
-                let block_key = block_idx.to_be_bytes();
-                let block_data = match db.get_cf(&cf_blocks, &block_key) {
-                    Ok(Some(data)) => data,
-                    Ok(None) => {
-                        blocks_missing += 1;
-                        continue;
-                    }
-                    Err(e) => {
-                        if blocks_found == 0 && block_idx == shard_start {
-                            warn!("Cold storage: RocksDB read error at block {}: {}", block_idx, e);
-                        }
-                        blocks_missing += 1;
-                        continue;
-                    }
-                };
-
-                let block: crate::blockchain::block::Block = match serde_json::from_slice(&block_data) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        if deserialize_errors == 0 {
-                            warn!("Cold storage: Failed to deserialize block {}: {}", block_idx, e);
-                        }
-                        deserialize_errors += 1;
-                        continue;
-                    }
-                };
-                blocks_found += 1;
-
-                for (tx_idx, tx) in block.transactions.iter().enumerate() {
-                    entries.push(ColdEntry {
-                        tx_hash: tx.hash.clone(),
-                        block_index: block_idx,
-                        tx_index: tx_idx as u32,
-                    });
-                    tx_keys_to_delete.push(tx.hash.as_bytes().to_vec());
-                }
-            }
-
-            info!(
-                "Shard {}_{}: found {} blocks, {} missing, {} deser errors, {} tx entries",
-                shard_start, shard_end - 1, blocks_found, blocks_missing, deserialize_errors, entries.len()
-            );
-
-            if entries.is_empty() {
-                info!("Shard {}_{}: no entries, skipping", shard_start, shard_end - 1);
-                shard_start = shard_end;
-                continue;
-            }
-
-            let entry_count = entries.len() as u64;
+            // Separate keys and entries
+            let tx_keys: Vec<Vec<u8>> = bucket.iter().map(|(k, _)| k.clone()).collect();
+            let entries: Vec<ColdEntry> = bucket.into_iter().map(|(_, e)| e).collect();
 
             // Write compressed shard file
             let shard_path = self
@@ -302,7 +321,7 @@ impl ColdStorage {
 
             // Delete migrated entries from RocksDB transactions CF
             let mut batch = rocksdb::WriteBatch::default();
-            for key in &tx_keys_to_delete {
+            for key in &tx_keys {
                 batch.delete_cf(&cf_txs, key);
             }
             db.write(batch)
@@ -329,13 +348,12 @@ impl ColdStorage {
             );
 
             total_migrated += entry_count;
-            shard_start = shard_end;
         }
 
         if total_migrated > 0 {
             info!(
-                "Cold storage migration complete: {} entries migrated, new cutoff={}",
-                total_migrated, aligned_cutoff
+                "Cold storage migration complete: {} entries migrated across {} shards, new cutoff={}",
+                total_migrated, self.shard_index.len(), aligned_cutoff
             );
         }
 
@@ -379,8 +397,7 @@ impl ColdStorage {
     /// Look up a transaction in cold storage by hash.
     /// Returns TxLocation if found, None otherwise.
     pub fn get_transaction_location(&self, tx_hash: &str) -> Option<TxLocation> {
-        // We need to search through shards. Since we don't have a global hash index,
-        // we search from newest to oldest shard (most likely to find recent cold tx first).
+        // Search through shards from newest to oldest
         for (_, shard_info) in self.shard_index.iter().rev() {
             let path = Path::new(&shard_info.file_path);
             if !path.exists() {
@@ -390,8 +407,6 @@ impl ColdStorage {
 
             match self.read_shard(path) {
                 Ok(entries) => {
-                    // Binary search would be ideal but entries are sorted by block, not hash.
-                    // Linear scan within the shard (typically 400K entries, fast enough).
                     for entry in &entries {
                         if entry.tx_hash == tx_hash {
                             return Some(TxLocation {

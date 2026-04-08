@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::info;
+use std::sync::Mutex as StdMutex;
 
 use crate::blockchain::{Blockchain, Transaction, Block};
 use crate::consensus::{PoIEConsensus};
@@ -25,6 +26,7 @@ pub struct AppState {
     pub consensus: Arc<RwLock<PoIEConsensus>>,
     pub marketplace: Arc<RwLock<DataMarketplace>>,
     pub network: Arc<NetworkManager>,
+    pub migration_status: Arc<StdMutex<String>>,
 }
 
 // ============ Request/Response Types ============
@@ -636,6 +638,19 @@ fn get_disk_usage(path: &str) -> serde_json::Value {
 /// Migration runs as a background task since scanning transactions CF can take minutes.
 pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder {
     let blockchain_arc = data.blockchain.clone();
+    let status_arc = data.migration_status.clone();
+    
+    // Check if migration is already running
+    {
+        let status = status_arc.lock().unwrap();
+        if status.starts_with("RUNNING") {
+            return HttpResponse::Ok().json(serde_json::json!({
+                "success": false,
+                "error": "Migration already in progress",
+                "status": status.clone()
+            }));
+        }
+    }
     
     // Quick pre-check with read lock
     let (height, has_storage, has_cold_storage, cold_stats) = {
@@ -658,23 +673,55 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
     
     info!("Manual cold storage migration triggered at height {}", height);
     
+    // Update status
+    {
+        let mut status = status_arc.lock().unwrap();
+        *status = format!("RUNNING: started at height {}", height);
+    }
+    
     // Spawn background task for the actual migration
+    let status_arc2 = status_arc.clone();
     tokio::spawn(async move {
         info!("Background cold storage migration starting...");
         let mut blockchain = blockchain_arc.write().await;
         let (migrated, debug_msg) = blockchain.migrate_cold_storage();
         info!("Background cold storage migration finished: {}", debug_msg);
-        if migrated > 0 {
+        
+        let result_msg = if migrated > 0 {
             info!("Running post-migration compaction...");
             blockchain.compact_storage();
             info!("Post-migration compaction complete");
-        }
+            format!("DONE: migrated={} | {}", migrated, debug_msg)
+        } else {
+            format!("DONE: migrated=0 | {}", debug_msg)
+        };
+        
+        let mut status = status_arc2.lock().unwrap();
+        *status = result_msg;
     });
     
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
-        "message": "Cold storage migration started in background. Check /api/status for progress.",
+        "message": "Cold storage migration started in background. Check /api/maintenance/migration-status for progress.",
         "chain_height": height,
+        "cold_storage": cold_stats.map(|cs| serde_json::json!({
+            "cutoff_height": cs.cutoff_height,
+            "total_shards": cs.total_shards,
+            "total_archived_entries": cs.total_archived_entries,
+            "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0
+        }))
+    }))
+}
+
+/// Get migration status (GET /api/maintenance/migration-status)
+pub async fn get_migration_status(data: web::Data<AppState>) -> impl Responder {
+    let status = data.migration_status.lock().unwrap().clone();
+    let blockchain = data.blockchain.read().await;
+    let cold_stats = blockchain.get_cold_storage_stats();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "migration_status": status,
+        "chain_height": blockchain.total_blocks,
         "cold_storage": cold_stats.map(|cs| serde_json::json!({
             "cutoff_height": cs.cutoff_height,
             "total_shards": cs.total_shards,
@@ -733,6 +780,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         
         // Maintenance routes
         .route("/api/maintenance/cold-migrate", web::post().to(trigger_cold_migration))
+        .route("/api/maintenance/migration-status", web::get().to(get_migration_status))
         .route("/api/maintenance/debug-blocks-cf", web::get().to(debug_blocks_cf));
 }
 

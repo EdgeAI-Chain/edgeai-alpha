@@ -226,6 +226,7 @@ async fn main() -> std::io::Result<()> {
         consensus: consensus.clone(),
         marketplace: marketplace.clone(),
         network: network.clone(),
+        migration_status: Arc::new(std::sync::Mutex::new("IDLE".to_string())),
     });
     
     // Create device state (separate for modularity)

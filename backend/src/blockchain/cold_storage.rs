@@ -183,16 +183,24 @@ impl ColdStorage {
         }
 
         info!(
-            "Cold storage migration: current_cutoff={}, target_cutoff={}, aligned={}",
-            current_cutoff, target_cutoff, aligned_cutoff
+            "Cold storage migration: current_cutoff={}, target_cutoff={}, aligned={}, height={}",
+            current_cutoff, target_cutoff, aligned_cutoff, current_height
         );
 
-        let cf_txs = db
-            .cf_handle("transactions")
-            .ok_or("CF_TRANSACTIONS not found")?;
-        let cf_blocks = db
-            .cf_handle("blocks")
-            .ok_or("CF_BLOCKS not found")?;
+        let cf_txs = match db.cf_handle("transactions") {
+            Some(cf) => cf,
+            None => {
+                error!("Cold storage: CF_TRANSACTIONS not found in DB");
+                return Err("CF_TRANSACTIONS not found".to_string());
+            }
+        };
+        let cf_blocks = match db.cf_handle("blocks") {
+            Some(cf) => cf,
+            None => {
+                error!("Cold storage: CF_BLOCKS not found in DB");
+                return Err("CF_BLOCKS not found".to_string());
+            }
+        };
 
         let mut total_migrated: u64 = 0;
 
@@ -216,19 +224,39 @@ impl ColdStorage {
             // Collect all tx entries for blocks in this range
             let mut entries: Vec<ColdEntry> = Vec::new();
             let mut tx_keys_to_delete: Vec<Vec<u8>> = Vec::new();
+            let mut blocks_found: u64 = 0;
+            let mut blocks_missing: u64 = 0;
+            let mut deserialize_errors: u64 = 0;
 
             for block_idx in shard_start..shard_end {
                 // Read the block from RocksDB to get its transactions
                 let block_key = block_idx.to_be_bytes();
                 let block_data = match db.get_cf(&cf_blocks, &block_key) {
                     Ok(Some(data)) => data,
-                    _ => continue, // Block might not exist (sparse chain)
+                    Ok(None) => {
+                        blocks_missing += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        if blocks_found == 0 && block_idx == shard_start {
+                            warn!("Cold storage: RocksDB read error at block {}: {}", block_idx, e);
+                        }
+                        blocks_missing += 1;
+                        continue;
+                    }
                 };
 
                 let block: crate::blockchain::block::Block = match serde_json::from_slice(&block_data) {
                     Ok(b) => b,
-                    Err(_) => continue,
+                    Err(e) => {
+                        if deserialize_errors == 0 {
+                            warn!("Cold storage: Failed to deserialize block {}: {}", block_idx, e);
+                        }
+                        deserialize_errors += 1;
+                        continue;
+                    }
                 };
+                blocks_found += 1;
 
                 for (tx_idx, tx) in block.transactions.iter().enumerate() {
                     entries.push(ColdEntry {
@@ -240,7 +268,13 @@ impl ColdStorage {
                 }
             }
 
+            info!(
+                "Shard {}_{}: found {} blocks, {} missing, {} deser errors, {} tx entries",
+                shard_start, shard_end - 1, blocks_found, blocks_missing, deserialize_errors, entries.len()
+            );
+
             if entries.is_empty() {
+                info!("Shard {}_{}: no entries, skipping", shard_start, shard_end - 1);
                 shard_start = shard_end;
                 continue;
             }

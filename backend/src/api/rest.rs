@@ -716,18 +716,36 @@ pub async fn trigger_cold_migration(data: web::Data<AppState>) -> impl Responder
 /// Get migration status (GET /api/maintenance/migration-status)
 pub async fn get_migration_status(data: web::Data<AppState>) -> impl Responder {
     let status = data.migration_status.lock().unwrap().clone();
-    let blockchain = data.blockchain.read().await;
-    let cold_stats = blockchain.get_cold_storage_stats();
+    
+    // Try to get blockchain stats with a short timeout (non-blocking)
+    // If the write lock is held by migration, just return status without blockchain info
+    let blockchain_info = match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        data.blockchain.read()
+    ).await {
+        Ok(blockchain) => {
+            let cold_stats = blockchain.get_cold_storage_stats();
+            serde_json::json!({
+                "chain_height": blockchain.total_blocks,
+                "cold_storage": cold_stats.map(|cs| serde_json::json!({
+                    "cutoff_height": cs.cutoff_height,
+                    "total_shards": cs.total_shards,
+                    "total_archived_entries": cs.total_archived_entries,
+                    "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0
+                }))
+            })
+        }
+        Err(_) => {
+            serde_json::json!({
+                "chain_height": "locked (migration in progress)",
+                "cold_storage": "locked (migration in progress)"
+            })
+        }
+    };
     
     HttpResponse::Ok().json(serde_json::json!({
         "migration_status": status,
-        "chain_height": blockchain.total_blocks,
-        "cold_storage": cold_stats.map(|cs| serde_json::json!({
-            "cutoff_height": cs.cutoff_height,
-            "total_shards": cs.total_shards,
-            "total_archived_entries": cs.total_archived_entries,
-            "archive_size_mb": (cs.total_archive_size_mb * 10.0).round() / 10.0
-        }))
+        "blockchain": blockchain_info
     }))
 }
 

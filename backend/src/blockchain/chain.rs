@@ -17,7 +17,8 @@ use rayon::prelude::*;
 use crate::blockchain::block::Block;
 use crate::blockchain::transaction::{Transaction, TransactionType};
 use crate::blockchain::storage::Storage;
-use crate::blockchain::cold_storage::{ColdStorage, ColdStorageStats};
+#[allow(unused_imports)]
+use crate::blockchain::cold_storage::{ColdStorage, ColdStorageStats, MigrationResult};
 
 const DATA_DIR: &str = "/data";
 const BLOCKS_FILE: &str = "blocks.jsonl";  // JSON Lines format for append-only
@@ -693,7 +694,8 @@ impl Blockchain {
         self.cold_storage.is_some()
     }
     
-    /// Should be called periodically from the mining loop.
+    /// Run incremental cold storage migration.
+    /// Processes at most a few shards per call to keep memory bounded.
     /// Returns (migrated_count, debug_message).
     pub fn migrate_cold_storage(&mut self) -> (u64, String) {
         let current_height = self.total_blocks;
@@ -708,27 +710,28 @@ impl Blockchain {
         };
         
         let db = storage.get_db();
-        let has_tx_cf = db.cf_handle("transactions").is_some();
-        let has_blocks_cf = db.cf_handle("blocks").is_some();
-        let pre_debug = format!("height={}, cutoff={}, has_tx_cf={}, has_blocks_cf={}", 
-            current_height, current_cutoff, has_tx_cf, has_blocks_cf);
+        let pre_debug = format!("height={}, cutoff={}", current_height, current_cutoff);
         
         match cold.migrate_from_rocksdb(db, current_height, current_cutoff) {
-            Ok(migrated) => {
-                if migrated > 0 {
-                    let new_cutoff = if current_height > 50_000 {
-                        ((current_height - 50_000) / 10_000) * 10_000
-                    } else {
-                        0
-                    };
-                    self.cold_storage_cutoff = new_cutoff;
+            Ok(result) => {
+                // Update cutoff based on contiguous shard coverage
+                if result.new_cutoff > current_cutoff {
+                    self.cold_storage_cutoff = result.new_cutoff;
                     if let Some(ref s) = self.storage {
-                        s.set_cold_storage_cutoff(new_cutoff);
+                        s.set_cold_storage_cutoff(result.new_cutoff);
                     }
-                    info!("Cold storage migration: {} entries archived, cutoff now at block {}",
-                          migrated, new_cutoff);
+                    info!(
+                        "Cold storage: {} entries in {} shards, cutoff {} -> {}, remaining={}",
+                        result.migrated_count, result.shards_processed,
+                        current_cutoff, result.new_cutoff, result.has_remaining
+                    );
                 }
-                (migrated, format!("OK: {} | migrated={}", pre_debug, migrated))
+                let msg = format!(
+                    "OK: {} | migrated={}, shards={}, cutoff={}, remaining={}",
+                    pre_debug, result.migrated_count, result.shards_processed,
+                    result.new_cutoff, result.has_remaining
+                );
+                (result.migrated_count, msg)
             }
             Err(e) => {
                 error!("Cold storage migration failed: {}", e);

@@ -575,7 +575,7 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
         "last_block_time": last_block_time,
         "difficulty": difficulty,
         "active_accounts": active_accounts,
-        "version": "0.7.0",
+        "version": "0.8.0",
         "node_type": "full_node",
         "disk": disk_info,
         "rocksdb": db_info,

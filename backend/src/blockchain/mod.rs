@@ -16,4 +16,4 @@ pub use transaction::{Transaction, TransactionType};
 pub use chain::Blockchain;
 pub use mempool::MempoolManager;
 pub use storage::DbStats;
-pub use cold_storage::{ColdStorage, ColdStorageStats};
+pub use cold_storage::{ColdStorage, ColdStorageStats, MigrationResult};

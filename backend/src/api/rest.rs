@@ -528,7 +528,7 @@ pub async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
         "service": "edgeai-blockchain-node",
-        "version": "0.6.1"
+        "version": "0.10.0"
     }))
 }
 

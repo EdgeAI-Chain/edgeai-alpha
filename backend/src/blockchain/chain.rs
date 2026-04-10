@@ -19,6 +19,7 @@ use crate::blockchain::transaction::{Transaction, TransactionType};
 use crate::blockchain::storage::Storage;
 #[allow(unused_imports)]
 use crate::blockchain::cold_storage::{ColdStorage, ColdStorageStats, MigrationResult};
+use crate::blockchain::cold_blocks::{ColdBlocks, ColdBlocksStats, BlockMigrationResult};
 
 const DATA_DIR: &str = "/data";
 const BLOCKS_FILE: &str = "blocks.jsonl";  // JSON Lines format for append-only
@@ -98,6 +99,12 @@ pub struct Blockchain {
     /// Block height below which tx indexes have been migrated to cold storage
     #[serde(default)]
     pub cold_storage_cutoff: u64,
+    /// Cold storage for archived block data
+    #[serde(skip)]
+    cold_blocks: Option<ColdBlocks>,
+    /// Block height below which blocks have been migrated to cold storage
+    #[serde(default)]
+    pub cold_blocks_cutoff: u64,
     pub state: ChainState,
     pub difficulty: u64,
     pub block_reward: u64,
@@ -193,6 +200,8 @@ impl Blockchain {
             storage,
             cold_storage,
             cold_storage_cutoff: 0,
+            cold_blocks: None,
+            cold_blocks_cutoff: 0,
             state,
             difficulty: 2,
             block_reward: 100,
@@ -303,12 +312,27 @@ impl Blockchain {
         // Load cold storage cutoff from metadata
         let cold_storage_cutoff = storage.get_cold_storage_cutoff();
         
+        // Initialize cold blocks storage
+        let cold_blocks = match ColdBlocks::open(DATA_DIR) {
+            Ok(cb) => {
+                info!("Cold blocks loaded with {} shards", cb.get_shard_list().len());
+                Some(cb)
+            }
+            Err(e) => {
+                warn!("Failed to initialize cold blocks: {}", e);
+                None
+            }
+        };
+        let cold_blocks_cutoff = storage.get_cold_blocks_cutoff();
+        
         let mut chain = Blockchain {
             chain: recent_blocks,
             pending_transactions: Vec::new(),
             storage: Some(storage),
             cold_storage,
             cold_storage_cutoff,
+            cold_blocks,
+            cold_blocks_cutoff,
             state,
             difficulty: metadata.difficulty,
             block_reward: metadata.block_reward,
@@ -388,6 +412,8 @@ impl Blockchain {
             storage,
             cold_storage,
             cold_storage_cutoff: 0,
+            cold_blocks: None,
+            cold_blocks_cutoff: 0,
             state,
             difficulty: metadata.difficulty,
             block_reward: metadata.block_reward,
@@ -502,6 +528,8 @@ impl Blockchain {
             storage,
             cold_storage,
             cold_storage_cutoff: 0,
+            cold_blocks: None,
+            cold_blocks_cutoff: 0,
             state: legacy.state,
             difficulty: legacy.difficulty,
             block_reward: legacy.block_reward,
@@ -740,9 +768,59 @@ impl Blockchain {
         }
     }
     
+    /// Run incremental cold blocks migration.
+    /// Processes at most a few shards per call to keep memory bounded.
+    /// Returns (migrated_count, debug_message).
+    pub fn migrate_cold_blocks(&mut self) -> (u64, String) {
+        let current_height = self.total_blocks;
+        let current_cutoff = self.cold_blocks_cutoff;
+        
+        let (cold_b, storage) = match (&mut self.cold_blocks, &self.storage) {
+            (Some(c), Some(s)) => (c, s),
+            _ => {
+                let msg = format!("cold_blocks={}, storage={}", self.cold_blocks.is_some(), self.storage.is_some());
+                return (0, format!("NOT_AVAILABLE: {}", msg));
+            }
+        };
+        
+        let db = storage.get_db();
+        let pre_debug = format!("height={}, cutoff={}", current_height, current_cutoff);
+        
+        match cold_b.migrate_from_rocksdb(db, current_height, current_cutoff) {
+            Ok(result) => {
+                if result.new_cutoff > current_cutoff {
+                    self.cold_blocks_cutoff = result.new_cutoff;
+                    if let Some(ref s) = self.storage {
+                        s.set_cold_blocks_cutoff(result.new_cutoff);
+                    }
+                    info!(
+                        "Cold blocks: {} blocks in {} shards, cutoff {} -> {}, remaining={}",
+                        result.migrated_count, result.shards_processed,
+                        current_cutoff, result.new_cutoff, result.has_remaining
+                    );
+                }
+                let msg = format!(
+                    "OK: {} | migrated={}, shards={}, cutoff={}, remaining={}",
+                    pre_debug, result.migrated_count, result.shards_processed,
+                    result.new_cutoff, result.has_remaining
+                );
+                (result.migrated_count, msg)
+            }
+            Err(e) => {
+                error!("Cold blocks migration failed: {}", e);
+                (0, format!("ERROR: {} | err={}", pre_debug, e))
+            }
+        }
+    }
+    
     /// Get cold storage statistics
     pub fn get_cold_storage_stats(&self) -> Option<ColdStorageStats> {
         self.cold_storage.as_ref().map(|cs| cs.get_stats(self.cold_storage_cutoff))
+    }
+    
+    /// Get cold blocks statistics
+    pub fn get_cold_blocks_stats(&self) -> Option<ColdBlocksStats> {
+        self.cold_blocks.as_ref().map(|cb| cb.get_stats(self.cold_blocks_cutoff))
     }
     
     /// Debug: sample blocks CF keys for diagnostics
@@ -782,6 +860,13 @@ impl Blockchain {
         // Try RocksDB (O(1) lookup)
         if let Some(ref storage) = self.storage {
             if let Some(block) = storage.get_block(index) {
+                return Some(block);
+            }
+        }
+        
+        // Try cold blocks storage (for blocks migrated out of RocksDB)
+        if let Some(ref cold_b) = self.cold_blocks {
+            if let Some(block) = cold_b.get_block(index) {
                 return Some(block);
             }
         }
@@ -832,8 +917,17 @@ impl Blockchain {
         if let Some(ref cold) = self.cold_storage {
             if let Some(loc) = cold.get_transaction_location(hash) {
                 // Found in cold storage, load the block to get the full transaction
+                // Block might be in RocksDB or in cold_blocks
                 if let Some(ref storage) = self.storage {
                     if let Some(block) = storage.get_block(loc.block_index) {
+                        if let Some(tx) = block.transactions.get(loc.tx_index as usize) {
+                            return Some(tx.clone());
+                        }
+                    }
+                }
+                // Block might have been migrated to cold_blocks
+                if let Some(ref cold_b) = self.cold_blocks {
+                    if let Some(block) = cold_b.get_block(loc.block_index) {
                         if let Some(tx) = block.transactions.get(loc.tx_index as usize) {
                             return Some(tx.clone());
                         }

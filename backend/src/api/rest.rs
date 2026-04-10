@@ -27,6 +27,7 @@ pub struct AppState {
     pub marketplace: Arc<RwLock<DataMarketplace>>,
     pub network: Arc<NetworkManager>,
     pub migration_status: Arc<StdMutex<String>>,
+    pub block_migration_status: Arc<StdMutex<String>>,
 }
 
 // ============ Request/Response Types ============
@@ -555,7 +556,7 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
         })
     });
     
-    // Cold storage stats
+    // Cold storage stats (transactions)
     let cold_info = blockchain.get_cold_storage_stats().map(|cs| {
         serde_json::json!({
             "enabled": cs.enabled,
@@ -567,6 +568,19 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
             "keep_hot_blocks": cs.keep_hot_blocks
         })
     });
+    
+    // Cold blocks stats
+    let cold_blocks_info = blockchain.get_cold_blocks_stats().map(|cb| {
+        serde_json::json!({
+            "enabled": cb.enabled,
+            "cutoff_height": cb.cutoff_height,
+            "total_shards": cb.total_shards,
+            "total_archived_blocks": cb.total_archived_blocks,
+            "archive_size_mb": (cb.total_archive_size_mb * 10.0).round() / 10.0,
+            "shard_size": cb.shard_size,
+            "keep_hot_blocks": cb.keep_hot_blocks
+        })
+    });
 
     HttpResponse::Ok().json(serde_json::json!({
         "status": "running",
@@ -575,11 +589,12 @@ pub async fn get_node_status(data: web::Data<AppState>) -> impl Responder {
         "last_block_time": last_block_time,
         "difficulty": difficulty,
         "active_accounts": active_accounts,
-        "version": "0.9.0",
+        "version": "0.10.0",
         "node_type": "full_node",
         "disk": disk_info,
         "rocksdb": db_info,
-        "cold_storage": cold_info
+        "cold_storage": cold_info,
+        "cold_blocks": cold_blocks_info
     }))
 }
 
@@ -822,7 +837,74 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // Maintenance routes
         .route("/api/maintenance/cold-migrate", web::post().to(trigger_cold_migration))
         .route("/api/maintenance/migration-status", web::get().to(get_migration_status))
+        .route("/api/maintenance/cold-blocks-migrate", web::post().to(trigger_cold_blocks_migration))
         .route("/api/maintenance/debug-blocks-cf", web::get().to(debug_blocks_cf));
+}
+
+/// Manually trigger cold blocks migration (POST /api/maintenance/cold-blocks-migrate)
+pub async fn trigger_cold_blocks_migration(data: web::Data<AppState>) -> impl Responder {
+    let blockchain_arc = data.blockchain.clone();
+    let status_arc = data.block_migration_status.clone();
+    
+    // Check if migration is already running
+    {
+        let status = status_arc.lock().unwrap();
+        if status.starts_with("RUNNING") {
+            return HttpResponse::Ok().json(serde_json::json!({
+                "success": false,
+                "error": "Block migration already in progress",
+                "status": status.clone()
+            }));
+        }
+    }
+    
+    let height = {
+        let blockchain = blockchain_arc.read().await;
+        blockchain.total_blocks
+    };
+    
+    info!("Manual cold blocks migration triggered at height {}", height);
+    
+    {
+        let mut status = status_arc.lock().unwrap();
+        *status = format!("RUNNING: started at height {}", height);
+    }
+    
+    let handle = tokio::runtime::Handle::current();
+    let status_arc2 = status_arc.clone();
+    std::thread::Builder::new()
+        .name("cold-blocks-migration".into())
+        .spawn(move || {
+            info!("Background cold blocks migration thread started");
+            let mut blockchain = handle.block_on(blockchain_arc.write());
+            
+            {
+                let mut status = status_arc2.lock().unwrap();
+                *status = format!("RUNNING: migrating blocks at height {}", height);
+            }
+            
+            let (migrated, debug_msg) = blockchain.migrate_cold_blocks();
+            info!("Cold blocks migration finished: {}", debug_msg);
+            
+            let result_msg = if migrated > 0 {
+                blockchain.compact_storage();
+                format!("DONE: migrated={} | {}", migrated, debug_msg)
+            } else {
+                format!("DONE: migrated=0 | {}", debug_msg)
+            };
+            
+            drop(blockchain);
+            
+            let mut status = status_arc2.lock().unwrap();
+            *status = result_msg;
+        })
+        .expect("Failed to spawn block migration thread");
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "message": "Cold blocks migration started in background.",
+        "chain_height": height
+    }))
 }
 
 /// Debug: sample blocks CF keys to diagnose cold storage migration issues

@@ -391,9 +391,7 @@ async fn main() -> std::io::Result<()> {
                 
                 // Collect pending transactions from mempool
                 let mut mempool = MempoolManager::with_block_context(current_height);
-                let batch_size = 100 + (current_height % 51) as usize;
-                let pending_txs = mempool.collect_pending(batch_size);
-                info!("Generated {} transactions from mempool for block {}", pending_txs.len(), current_height);
+                let pending_txs = mempool.collect_for_block(current_height);
                 
                 let mut added_count = 0;
                 let mut failed_count = 0;
@@ -406,8 +404,8 @@ async fn main() -> std::io::Result<()> {
                         }
                     }
                 }
-                if added_count > 0 || failed_count > 0 {
-                    info!("Mempool: {} transactions added, {} rejected", added_count, failed_count);
+                if failed_count > 0 {
+                    log::warn!("Block {}: {} tx rejected out of {}", current_height, failed_count, added_count + failed_count);
                 }
                 
                 // Produce new block

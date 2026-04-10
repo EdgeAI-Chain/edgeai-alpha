@@ -34,3 +34,4 @@ Cargo.lock
 # Data
 /data/
 chain.json
+.github/workflows/ci.yml

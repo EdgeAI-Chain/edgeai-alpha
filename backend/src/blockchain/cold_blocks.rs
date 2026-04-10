@@ -294,16 +294,17 @@ impl ColdBlocks {
             // Periodically flush writers to prevent too many open handles
             if flush_count >= PHASE1_FLUSH_INTERVAL {
                 for w in staging_writers.values_mut() {
-                    let _ = w.flush();
+                    let _ = std::io::Write::flush(w);
                 }
                 flush_count = 0;
             }
         }
 
         // Final flush and close all writers
-        for (_, mut w) in staging_writers.drain() {
-            let _ = w.flush();
+        for w in staging_writers.values_mut() {
+            let _ = std::io::Write::flush(w);
         }
+        drop(staging_writers);
 
         info!(
             "Phase 1 done: scanned={}, eligible={}, hot={}, existing={}",
@@ -563,7 +564,7 @@ impl ColdBlocks {
                 }
                 Err(e) => return Err(format!("Read batch len: {}", e)),
             }
-            let batch_len = u32::from_le_bytes(len_buf) as usize;
+            let _batch_len = u32::from_le_bytes(len_buf) as usize;
 
             // Read the batch data
             // We need to read the bincode-serialized Vec<ArchivedBlock>
@@ -584,7 +585,7 @@ impl ColdBlocks {
             // Parse all batches from the decompressed data
             let mut cursor = 0;
             while cursor + 4 <= all_data.len() {
-                let bl = u32::from_le_bytes(
+                let _bl = u32::from_le_bytes(
                     all_data[cursor..cursor + 4].try_into().unwrap_or([0; 4]),
                 ) as usize;
                 cursor += 4;
